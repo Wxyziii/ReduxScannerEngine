@@ -121,6 +121,7 @@ Use the helper scripts in `scripts/` to create this layout.
 ```text
 redux_rpf_scanner scan-rpf
 redux_rpf_scanner compare-rpf
+redux_rpf_scanner baseline-scan
 redux_rpf_scanner version
 redux_rpf_scanner validate-tools --keys <keys_dir>
 redux_rpf_scanner scan-rpf --mode <fast|targeted|deep|full>
@@ -198,6 +199,79 @@ Examples:
   --mode targeted `
   --depth 4
 ```
+
+## Baseline scan (R0.3)
+
+`baseline-scan` scans a **clean** `update.rpf` once and writes 4 artifacts to a folder.
+
+```powershell
+.\dist\redux_rpf_scanner.exe baseline-scan `
+  --archive "path\to\clean_update.rpf" `
+  --keys "path\to\rpf_keys" `
+  --out "output\baseline" `
+  --depth 4
+```
+
+Output folder contains:
+
+```text
+output\baseline\
+├── full_clean_manifest.json          all entries with metadata + isTextCandidate flags
+├── full_clean_tree.json              structure summary: top folders, extension counts, path list
+├── baseline_update_tree_fingerprint.json  deterministic fingerprint + anchor path check
+└── baseline_metadata.json           identity + scanner/schema/rules version for cache validation
+```
+
+### When to rebuild the baseline
+
+Rebuild the baseline when:
+
+- The clean `update.rpf` changes (new GTA patch)
+- Scanner or schema version changes
+- Rules version changes
+- You explicitly want a fresh baseline
+
+The `baseline_metadata.json` records the archive sha256, scanner version, and schema version. Check these before reusing a cached baseline.
+
+### Baseline artifacts must not be committed
+
+Do not commit baseline output artifacts produced from real game files. They are derived from proprietary game data. Store them locally only.
+
+### full_clean_manifest.json
+
+Per-file entry shape:
+
+```json
+{
+  "path": "common/data/timecycle/timecycle_mods_1.xml",
+  "name": "timecycle_mods_1.xml",
+  "extension": "xml",
+  "sizeBytes": 47001,
+  "sha256": "...",
+  "source": "path/to/update.rpf",
+  "isTextCandidate": true,
+  "isBinaryCandidate": false
+}
+```
+
+### baseline_update_tree_fingerprint.json
+
+Shape summary:
+
+```json
+{
+  "schemaVersion": "2.0",
+  "artifactType": "baseline_update_tree_fingerprint",
+  "totalPaths": 12345,
+  "treeFingerprintSha256": "...",
+  "topLevelFolders": ["common", "x64", "dlc_patch"],
+  "extensionHistogram": [{"extension": "xml", "count": 312}, ...],
+  "anchorPathsFound": ["common/", "x64/", "dlc_patch/", "ptfx.rpf"],
+  "anchorPathsMissing": ["scaleform_minimap.rpf"]
+}
+```
+
+`treeFingerprintSha256` is a SHA-256 of sorted `"path:size"` strings. Deterministic for identical archives.
 
 ## Output metadata (schema v2)
 

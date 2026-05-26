@@ -275,6 +275,12 @@ struct ScanCounters {
     nested_archives_opened: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct AnchorCheckResult {
+    found: Vec<String>,
+    missing: Vec<String>,
+}
+
 #[derive(Debug)]
 struct Args {
     command: String,
@@ -299,17 +305,24 @@ fn usage() {
         r#"rpf_backend_rs
 
 Commands:
-  compare --clean <clean.update.rpf> --modded <modded.update.rpf> --keys <keys_dir> --out <report.json> [--depth 2] [--mode fast|targeted|deep|full] [--all|--targets-only]
-          [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
-  scan    --archive <update.rpf> --keys <keys_dir> --out <manifest.json> [--depth 2] [--mode fast|targeted|deep|full] [--all|--targets-only]
-          [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
+  compare       --clean <clean.update.rpf> --modded <modded.update.rpf> --keys <keys_dir> --out <report.json>
+                [--depth 2] [--mode fast|targeted|deep|full] [--all|--targets-only]
+                [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
+  scan          --archive <update.rpf> --keys <keys_dir> --out <manifest.json>
+                [--depth 2] [--mode fast|targeted|deep|full] [--all|--targets-only]
+                [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
+  baseline-scan --archive <update.rpf> --keys <keys_dir> --out <baseline_output_dir>
+                [--depth 2] [--mode full]
+                [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
   version
 
 Notes:
   - This backend uses the rpf-archive crate.
-  - Encrypted GTA V RPF7 requires a a valid keys directory.
+  - Encrypted GTA V RPF7 requires a valid keys directory.
   - Without keys, encrypted update.rpf cannot be read.
   - --all and --targets-only are deprecated; use --mode instead.
+  - baseline-scan writes: full_clean_manifest.json, full_clean_tree.json,
+    baseline_update_tree_fingerprint.json, baseline_metadata.json into the --out folder.
 "#
     );
 }
@@ -549,6 +562,94 @@ fn build_scan_metadata(args: &Args) -> ScanMetadata {
         mode: args.mode.as_str().to_string(),
         depth: args.depth,
     }
+}
+
+fn is_text_candidate(path: &str) -> bool {
+    let ext = extension(path);
+    matches!(
+        ext.as_str(),
+        "xml" | "dat" | "meta" | "ymt" | "cfg" | "ini" | "txt" | "json" | "gxt2" | "nametable"
+    )
+}
+
+fn top_level_folder(path: &str) -> Option<String> {
+    let p = normalize_path(path);
+    let seg = p.split('/').next()?;
+    if seg.is_empty() {
+        None
+    } else {
+        Some(seg.to_string())
+    }
+}
+
+fn build_extension_histogram(entries: &BTreeMap<String, EntryInfo>) -> BTreeMap<String, usize> {
+    let mut hist: BTreeMap<String, usize> = BTreeMap::new();
+    for entry in entries.values() {
+        let key = if entry.extension.is_empty() {
+            "(none)".to_string()
+        } else {
+            entry.extension.clone()
+        };
+        *hist.entry(key).or_insert(0) += 1;
+    }
+    hist
+}
+
+fn collect_top_level_folders(entries: &BTreeMap<String, EntryInfo>) -> Vec<String> {
+    let mut folders: BTreeSet<String> = BTreeSet::new();
+    for entry in entries.values() {
+        if let Some(f) = top_level_folder(&entry.path) {
+            folders.insert(f);
+        }
+    }
+    folders.into_iter().collect()
+}
+
+const ANCHOR_PATHS: &[&str] = &[
+    "common/",
+    "common/data/",
+    "common/data/timecycle/",
+    "common/data/visualsettings.dat",
+    "x64/",
+    "dlc_patch/",
+];
+
+const ANCHOR_BASENAMES: &[&str] = &["ptfx.rpf", "scaleform_minimap.rpf"];
+
+fn check_anchor_paths(entries: &BTreeMap<String, EntryInfo>) -> AnchorCheckResult {
+    let mut found = Vec::new();
+    let mut missing = Vec::new();
+
+    'outer: for anchor in ANCHOR_PATHS {
+        let trimmed = anchor.trim_end_matches('/');
+        for key in entries.keys() {
+            if key == trimmed || key.starts_with(*anchor) {
+                found.push(anchor.to_string());
+                continue 'outer;
+            }
+        }
+        missing.push(anchor.to_string());
+    }
+
+    for bname in ANCHOR_BASENAMES {
+        if entries.values().any(|e| e.name == *bname) {
+            found.push(bname.to_string());
+        } else {
+            missing.push(bname.to_string());
+        }
+    }
+
+    AnchorCheckResult { found, missing }
+}
+
+fn compute_tree_fingerprint_sha256(entries: &BTreeMap<String, EntryInfo>) -> String {
+    // BTreeMap already sorted by key; join "path:size\n" for deterministic hash
+    let joined: String = entries
+        .values()
+        .map(|e| format!("{}:{}", e.path, e.sizeBytes))
+        .collect::<Vec<_>>()
+        .join("\n");
+    sha256_hex(joined.as_bytes())
 }
 
 fn scan_options_for_mode(mode: ScanMode, for_compare: bool) -> ScanOptions {
@@ -1821,6 +1922,342 @@ fn write_scan_manifest(
     Ok(())
 }
 
+fn write_full_clean_manifest(
+    out_dir: &Path,
+    archive_identity: &ArchiveIdentity,
+    keys_path: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    scan: &ScanMetadata,
+    rules: &RulesMetadata,
+    entries: &BTreeMap<String, EntryInfo>,
+    warnings: &[Warning],
+    counters: &ScanCounters,
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct BaselineFileEntry<'a> {
+        path: &'a str,
+        name: &'a str,
+        extension: &'a str,
+        sizeBytes: usize,
+        sha256: &'a str,
+        source: &'a str,
+        isTextCandidate: bool,
+        isBinaryCandidate: bool,
+    }
+
+    #[derive(Serialize)]
+    struct BaselineScanBlock<'a> {
+        mode: &'a str,
+        depth: usize,
+        archivePath: &'a str,
+        archiveFileName: &'a str,
+        archiveSizeBytes: u64,
+        archiveSha256: &'a str,
+        keysPathProvided: bool,
+    }
+
+    #[derive(Serialize)]
+    struct BaselineManifestStats {
+        totalEntries: usize,
+        scannedEntries: usize,
+        targetEntries: usize,
+        nestedArchivesOpened: usize,
+        textCandidates: usize,
+        binaryCandidates: usize,
+        warnings: usize,
+    }
+
+    #[derive(Serialize)]
+    struct BaselineManifest<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        scan: BaselineScanBlock<'a>,
+        rules: &'a RulesMetadata,
+        stats: BaselineManifestStats,
+        warnings: &'a [Warning],
+        files: Vec<BaselineFileEntry<'a>>,
+    }
+
+    let files: Vec<BaselineFileEntry> = entries
+        .values()
+        .map(|e| {
+            let is_text = is_text_candidate(&e.path);
+            BaselineFileEntry {
+                path: &e.path,
+                name: &e.name,
+                extension: &e.extension,
+                sizeBytes: e.sizeBytes,
+                sha256: &e.sha256,
+                source: &e.source,
+                isTextCandidate: is_text,
+                isBinaryCandidate: !is_text,
+            }
+        })
+        .collect();
+
+    let text_count = files.iter().filter(|f| f.isTextCandidate).count();
+
+    let manifest = BaselineManifest {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "full_clean_manifest",
+        tool,
+        timing,
+        scan: BaselineScanBlock {
+            mode: &scan.mode,
+            depth: scan.depth,
+            archivePath: &archive_identity.archivePath,
+            archiveFileName: &archive_identity.archiveFileName,
+            archiveSizeBytes: archive_identity.archiveSizeBytes,
+            archiveSha256: &archive_identity.archiveSha256,
+            keysPathProvided: !keys_path.as_os_str().is_empty(),
+        },
+        rules,
+        stats: BaselineManifestStats {
+            totalEntries: entries.len(),
+            scannedEntries: entries.len(),
+            targetEntries: counters.target_entries,
+            nestedArchivesOpened: counters.nested_archives_opened,
+            textCandidates: text_count,
+            binaryCandidates: entries.len() - text_count,
+            warnings: warnings.len(),
+        },
+        warnings,
+        files,
+    };
+
+    let out = out_dir.join("full_clean_manifest.json");
+    let json = serde_json::to_string_pretty(&manifest)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_full_clean_tree(
+    out_dir: &Path,
+    archive_identity: &ArchiveIdentity,
+    tool: &ToolMetadata,
+    scan: &ScanMetadata,
+    entries: &BTreeMap<String, EntryInfo>,
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct ExtHistEntry {
+        extension: String,
+        count: usize,
+    }
+
+    #[derive(Serialize)]
+    struct TreeIdentityBlock<'a> {
+        archivePath: &'a str,
+        archiveFileName: &'a str,
+        archiveSizeBytes: u64,
+        archiveSha256: &'a str,
+    }
+
+    #[derive(Serialize)]
+    struct TreeStats {
+        totalEntries: usize,
+        nestedArchiveEntries: usize,
+        textCandidateEntries: usize,
+    }
+
+    #[derive(Serialize)]
+    struct CleanTree<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        archive: TreeIdentityBlock<'a>,
+        mode: &'a str,
+        depth: usize,
+        stats: TreeStats,
+        topLevelFolders: Vec<String>,
+        extensionCounts: Vec<ExtHistEntry>,
+        paths: Vec<&'a str>,
+    }
+
+    let top_folders = collect_top_level_folders(entries);
+    let ext_hist = build_extension_histogram(entries);
+    let ext_counts: Vec<ExtHistEntry> = ext_hist
+        .into_iter()
+        .map(|(extension, count)| ExtHistEntry { extension, count })
+        .collect();
+
+    let nested_count = entries.values().filter(|e| e.extension == "rpf").count();
+    let text_count = entries.values().filter(|e| is_text_candidate(&e.path)).count();
+    let paths: Vec<&str> = entries.values().map(|e| e.path.as_str()).collect();
+
+    let tree = CleanTree {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "full_clean_tree",
+        tool,
+        archive: TreeIdentityBlock {
+            archivePath: &archive_identity.archivePath,
+            archiveFileName: &archive_identity.archiveFileName,
+            archiveSizeBytes: archive_identity.archiveSizeBytes,
+            archiveSha256: &archive_identity.archiveSha256,
+        },
+        mode: &scan.mode,
+        depth: scan.depth,
+        stats: TreeStats {
+            totalEntries: entries.len(),
+            nestedArchiveEntries: nested_count,
+            textCandidateEntries: text_count,
+        },
+        topLevelFolders: top_folders,
+        extensionCounts: ext_counts,
+        paths,
+    };
+
+    let out = out_dir.join("full_clean_tree.json");
+    let json = serde_json::to_string_pretty(&tree)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_baseline_fingerprint(
+    out_dir: &Path,
+    archive_identity: &ArchiveIdentity,
+    tool: &ToolMetadata,
+    scan: &ScanMetadata,
+    entries: &BTreeMap<String, EntryInfo>,
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct ExtCount {
+        extension: String,
+        count: usize,
+    }
+
+    #[derive(Serialize)]
+    struct FingerprintIdentity<'a> {
+        archivePath: &'a str,
+        archiveFileName: &'a str,
+        archiveSizeBytes: u64,
+        archiveSha256: &'a str,
+    }
+
+    #[derive(Serialize)]
+    struct BaselineFingerprint<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        archive: FingerprintIdentity<'a>,
+        mode: &'a str,
+        depth: usize,
+        totalPaths: usize,
+        treeFingerprintSha256: String,
+        topLevelFolders: Vec<String>,
+        extensionHistogram: Vec<ExtCount>,
+        anchorPathsFound: Vec<String>,
+        anchorPathsMissing: Vec<String>,
+    }
+
+    let anchor_result = check_anchor_paths(entries);
+    let fingerprint_sha256 = compute_tree_fingerprint_sha256(entries);
+    let top_folders = collect_top_level_folders(entries);
+    let ext_hist = build_extension_histogram(entries);
+    let ext_counts: Vec<ExtCount> = ext_hist
+        .into_iter()
+        .map(|(extension, count)| ExtCount { extension, count })
+        .collect();
+
+    let fp = BaselineFingerprint {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "baseline_update_tree_fingerprint",
+        tool,
+        archive: FingerprintIdentity {
+            archivePath: &archive_identity.archivePath,
+            archiveFileName: &archive_identity.archiveFileName,
+            archiveSizeBytes: archive_identity.archiveSizeBytes,
+            archiveSha256: &archive_identity.archiveSha256,
+        },
+        mode: &scan.mode,
+        depth: scan.depth,
+        totalPaths: entries.len(),
+        treeFingerprintSha256: fingerprint_sha256,
+        topLevelFolders: top_folders,
+        extensionHistogram: ext_counts,
+        anchorPathsFound: anchor_result.found,
+        anchorPathsMissing: anchor_result.missing,
+    };
+
+    let out = out_dir.join("baseline_update_tree_fingerprint.json");
+    let json = serde_json::to_string_pretty(&fp)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_baseline_metadata(
+    out_dir: &Path,
+    archive_identity: &ArchiveIdentity,
+    tool: &ToolMetadata,
+    scan: &ScanMetadata,
+    rules: &RulesMetadata,
+    timing: &Timing,
+    artifact_names: &[&str],
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct BaselineRulesRef<'a> {
+        componentRulesPath: Option<&'a String>,
+        targetRulesPath: Option<&'a String>,
+        rulesDir: Option<&'a String>,
+        usedFallbackRules: bool,
+    }
+
+    #[derive(Serialize)]
+    struct BaselineMetadata<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        baselineArchiveHash: &'a str,
+        baselineArchiveSizeBytes: u64,
+        baselineArchiveFileName: &'a str,
+        scannerName: &'a str,
+        scannerVersion: &'a str,
+        backendVersion: &'a str,
+        scanMode: &'a str,
+        depth: usize,
+        createdAt: &'a str,
+        rules: BaselineRulesRef<'a>,
+        artifacts: &'a [&'a str],
+        reusableWhen: &'static str,
+    }
+
+    let meta = BaselineMetadata {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "baseline_metadata",
+        baselineArchiveHash: &archive_identity.archiveSha256,
+        baselineArchiveSizeBytes: archive_identity.archiveSizeBytes,
+        baselineArchiveFileName: &archive_identity.archiveFileName,
+        scannerName: &tool.name,
+        scannerVersion: &tool.version,
+        backendVersion: &tool.backendVersion,
+        scanMode: &scan.mode,
+        depth: scan.depth,
+        createdAt: &timing.finishedAt,
+        rules: BaselineRulesRef {
+            componentRulesPath: rules.componentRulesPath.as_ref(),
+            targetRulesPath: rules.targetRulesPath.as_ref(),
+            rulesDir: rules.rulesDir.as_ref(),
+            usedFallbackRules: rules.usedFallbackRules,
+        },
+        artifacts: artifact_names,
+        reusableWhen: "archive sha256, scanner version, schema version, and rules version all match",
+    };
+
+    let out = out_dir.join("baseline_metadata.json");
+    let json = serde_json::to_string_pretty(&meta)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1906,6 +2343,93 @@ mod tests {
     #[test]
     fn schema_version_is_2_0() {
         assert_eq!(SCHEMA_VERSION, "2.0");
+    }
+
+    fn make_test_entries() -> BTreeMap<String, EntryInfo> {
+        let mut m = BTreeMap::new();
+        for (path, size) in [
+            ("common/data/timecycle/timecycle_mods_1.xml", 1024usize),
+            ("common/data/visualsettings.dat", 512),
+            ("x64/patch/data/effects/ptfx.rpf", 8192),
+            ("x64/textures/some_texture.ytd", 4096),
+            ("dlc_patch/v1.0.0/x64/levels/level.ymap", 256),
+        ] {
+            let e = EntryInfo {
+                path: path.to_string(),
+                name: basename(path),
+                extension: extension(path),
+                sizeBytes: size,
+                sha256: sha256_hex(path.as_bytes()),
+                source: "test_archive.rpf".to_string(),
+            };
+            m.insert(path.to_string(), e);
+        }
+        m
+    }
+
+    #[test]
+    fn is_text_candidate_identifies_known_extensions() {
+        assert!(is_text_candidate("common/data/weather.xml"));
+        assert!(is_text_candidate("common/data/visualsettings.dat"));
+        assert!(is_text_candidate("some/file.meta"));
+        assert!(is_text_candidate("some/file.ymt"));
+        assert!(!is_text_candidate("textures.ytd"));
+        assert!(!is_text_candidate("ptfx.rpf"));
+        assert!(!is_text_candidate("minimap.gfx"));
+    }
+
+    #[test]
+    fn extension_histogram_counts_correctly() {
+        let entries = make_test_entries();
+        let hist = build_extension_histogram(&entries);
+        assert_eq!(*hist.get("xml").unwrap(), 1);
+        assert_eq!(*hist.get("dat").unwrap(), 1);
+        assert_eq!(*hist.get("rpf").unwrap(), 1);
+        assert_eq!(*hist.get("ytd").unwrap(), 1);
+        assert_eq!(*hist.get("ymap").unwrap(), 1);
+    }
+
+    #[test]
+    fn top_level_folders_extracts_unique_roots() {
+        let entries = make_test_entries();
+        let folders = collect_top_level_folders(&entries);
+        assert!(folders.contains(&"common".to_string()));
+        assert!(folders.contains(&"x64".to_string()));
+        assert!(folders.contains(&"dlc_patch".to_string()));
+        assert_eq!(folders.len(), 3);
+    }
+
+    #[test]
+    fn anchor_paths_detection_finds_expected() {
+        let entries = make_test_entries();
+        let result = check_anchor_paths(&entries);
+        assert!(result.found.contains(&"common/".to_string()));
+        assert!(result.found.contains(&"x64/".to_string()));
+        assert!(result.found.contains(&"dlc_patch/".to_string()));
+        assert!(result.found.contains(&"ptfx.rpf".to_string()));
+        assert!(result.missing.contains(&"scaleform_minimap.rpf".to_string()));
+    }
+
+    #[test]
+    fn tree_fingerprint_is_deterministic() {
+        let entries = make_test_entries();
+        let h1 = compute_tree_fingerprint_sha256(&entries);
+        let h2 = compute_tree_fingerprint_sha256(&entries);
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64); // sha256 hex = 64 chars
+        assert!(!h1.is_empty());
+    }
+
+    #[test]
+    fn tree_fingerprint_changes_on_different_entries() {
+        let entries1 = make_test_entries();
+        let mut entries2 = make_test_entries();
+        if let Some(e) = entries2.get_mut("common/data/visualsettings.dat") {
+            e.sizeBytes = 9999;
+        }
+        let h1 = compute_tree_fingerprint_sha256(&entries1);
+        let h2 = compute_tree_fingerprint_sha256(&entries2);
+        assert_ne!(h1, h2);
     }
 }
 
@@ -2119,6 +2643,87 @@ fn main() -> Result<()> {
                 } else {
                     println!("  {}: unchanged", c.name);
                 }
+            }
+        }
+        "baseline-scan" => {
+            let tool = build_tool_metadata(&args);
+            let started_at = OffsetDateTime::now_utc();
+            let start_instant = Instant::now();
+            let archive = args.archive.clone().context("baseline-scan requires --archive")?;
+            let keys_path = args.keys.clone().context("baseline-scan requires --keys")?;
+            let out_dir = args.out.clone().context("baseline-scan requires --out (output folder)")?;
+
+            fs::create_dir_all(&out_dir).with_context(|| {
+                format!("failed to create baseline output dir: {}", out_dir.display())
+            })?;
+
+            let archive_identity = build_archive_identity(&archive)?;
+            let keys = GtaKeys::load_from_path(&keys_path).with_context(|| {
+                format!("failed to load keys directory from {}", keys_path.display())
+            })?;
+
+            let mut warnings = Vec::new();
+            let rules = load_rules(&args, &mut warnings)?;
+
+            // Always use Full mode for baseline scan to capture every entry
+            let scan_options = scan_options_for_mode(ScanMode::Full, false);
+            let scan = ScanMetadata {
+                mode: ScanMode::Full.as_str().to_string(),
+                depth: args.depth,
+            };
+
+            let (entries, counters) = scan_archive(
+                &archive,
+                &keys,
+                args.depth,
+                scan_options,
+                rules.target_rules.as_ref(),
+                &mut warnings,
+            )?;
+
+            let timing = Timing {
+                startedAt: format_timestamp(started_at)?,
+                finishedAt: format_timestamp(OffsetDateTime::now_utc())?,
+                durationMs: start_instant.elapsed().as_millis() as u64,
+            };
+
+            const BASELINE_ARTIFACTS: &[&str] = &[
+                "full_clean_manifest.json",
+                "full_clean_tree.json",
+                "baseline_update_tree_fingerprint.json",
+                "baseline_metadata.json",
+            ];
+
+            write_full_clean_manifest(
+                &out_dir,
+                &archive_identity,
+                &keys_path,
+                &tool,
+                &timing,
+                &scan,
+                &rules.metadata,
+                &entries,
+                &warnings,
+                &counters,
+            )?;
+            write_full_clean_tree(&out_dir, &archive_identity, &tool, &scan, &entries)?;
+            write_baseline_fingerprint(&out_dir, &archive_identity, &tool, &scan, &entries)?;
+            write_baseline_metadata(
+                &out_dir,
+                &archive_identity,
+                &tool,
+                &scan,
+                &rules.metadata,
+                &timing,
+                BASELINE_ARTIFACTS,
+            )?;
+
+            println!("baseline-scan complete");
+            println!("archive: {}", archive.display());
+            println!("entries: {}", entries.len());
+            println!("out: {}", out_dir.display());
+            for name in BASELINE_ARTIFACTS {
+                println!("  artifact: {}", name);
             }
         }
         _ => {

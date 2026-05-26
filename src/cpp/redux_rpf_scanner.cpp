@@ -155,14 +155,21 @@ static void usage() {
 R"(Redux RPF Component Scanner - C++ frontend + rpf-rs backend
 
 Commands:
-  compare-rpf --clean <clean.update.rpf> --modded <modded.update.rpf> --keys <keys_dir> --out <report.json> [--backend <rpf_backend_rs.exe>] [--depth 2] [--mode fast|targeted|deep|full] [--all|--targets-only]
-  scan-rpf    --archive <update.rpf> --keys <keys_dir> --out <manifest.json> [--backend <rpf_backend_rs.exe>] [--depth 2] [--mode fast|targeted|deep|full] [--all|--targets-only]
-             [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
+  compare-rpf     --clean <clean.update.rpf> --modded <modded.update.rpf> --keys <keys_dir> --out <report.json>
+                  [--backend <rpf_backend_rs.exe>] [--depth 2] [--mode fast|targeted|deep|full] [--all|--targets-only]
+                  [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
+  scan-rpf        --archive <update.rpf> --keys <keys_dir> --out <manifest.json>
+                  [--backend <rpf_backend_rs.exe>] [--depth 2] [--mode fast|targeted|deep|full] [--all|--targets-only]
+                  [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
+  baseline-scan   --archive <update.rpf> --keys <keys_dir> --out <baseline_output_dir>
+                  [--backend <rpf_backend_rs.exe>] [--depth 2] [--mode full]
+                  [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
   version
-  validate-tools --keys <keys_dir> [--backend <rpf_backend_rs.exe>]
+  validate-tools  --keys <keys_dir> [--backend <rpf_backend_rs.exe>]
 
 Examples:
   redux_rpf_scanner.exe compare-rpf --clean "C:\clean\update.rpf" --modded "C:\modded\update.rpf" --keys "C:\rpf_keys" --out "diff.json"
+  redux_rpf_scanner.exe baseline-scan --archive "C:\clean\update.rpf" --keys "C:\rpf_keys" --out "C:\baseline_out"
 
 Notes:
   - This app needs the Rust backend built from rpf-rs/rpf-archive.
@@ -173,6 +180,11 @@ Notes:
       gtav_ng_decrypt_tables.dat
   - --all and --targets-only are deprecated; use --mode instead.
   - Rules files are optional; built-in rules are used if none are provided.
+  - baseline-scan writes 4 artifacts into --out folder:
+      full_clean_manifest.json
+      full_clean_tree.json
+      baseline_update_tree_fingerprint.json
+      baseline_metadata.json
   - This app does not provide or extract keys.
 )";
 }
@@ -297,6 +309,23 @@ static std::vector<std::string> build_backend_args(const Args& args) {
         if (args.out.empty()) throw std::runtime_error("Missing required --out path");
 
         v.push_back("scan");
+        v.push_back("--archive");
+        v.push_back(path_to_utf8(args.archive));
+        v.push_back("--keys");
+        v.push_back(path_to_utf8(args.keys));
+        v.push_back("--out");
+        v.push_back(path_to_utf8(args.out));
+        v.push_back("--depth");
+        v.push_back(std::to_string(args.depth));
+        v.push_back("--scanner-name");
+        v.push_back(SCANNER_NAME);
+        v.push_back("--scanner-version");
+        v.push_back(SCANNER_VERSION);
+    } else if (args.command == "baseline-scan") {
+        require_file(args.archive, "archive");
+        if (args.out.empty()) throw std::runtime_error("Missing required --out path (output folder)");
+
+        v.push_back("baseline-scan");
         v.push_back("--archive");
         v.push_back(path_to_utf8(args.archive));
         v.push_back("--keys");
@@ -641,7 +670,7 @@ static int validate_tools(const Args& args) {
 }
 
 static int run_backend(const Args& args) {
-    if (args.command != "compare-rpf" && args.command != "scan-rpf") {
+    if (args.command != "compare-rpf" && args.command != "scan-rpf" && args.command != "baseline-scan") {
         usage();
         throw std::runtime_error("Unknown command: " + args.command);
     }
