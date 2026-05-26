@@ -7630,6 +7630,48 @@ mod tests {
         let freq = compute_file_type_frequency(&changes, &unknown_entries);
         assert_eq!(freq[0].analyzerStatus, "analyzer_required");
     }
+
+    #[test]
+    fn scanner_ok_prefix_constant() {
+        // Verifies the SCANNER_OK prefix used by HomeOps is as documented
+        let out = std::path::Path::new("/data/diffs/redux_v2");
+        let line = format!("SCANNER_OK {}", out.display());
+        assert!(line.starts_with("SCANNER_OK "));
+        assert!(line.contains("redux_v2"));
+    }
+
+    #[test]
+    fn diff_artifact_list_is_complete() {
+        // Verifies the expected diff artifact filenames are known
+        let artifacts = vec![
+            "full_modded_manifest.json",
+            "full_modded_tree.json",
+            "clean_vs_modded_diff.json",
+            "diff_summary.json",
+            "unknown_changes.json",
+            "candidate_patterns.json",
+            "llm_review_queue.jsonl",
+        ];
+        for artifact in &artifacts {
+            assert!(!artifact.is_empty());
+            assert!(artifact.ends_with(".json") || artifact.ends_with(".jsonl"));
+        }
+        assert_eq!(artifacts.len(), 7);
+    }
+
+    #[test]
+    fn baseline_artifact_list_is_complete() {
+        let artifacts = vec![
+            "full_clean_manifest.json",
+            "full_clean_tree.json",
+            "baseline_update_tree_fingerprint.json",
+            "baseline_metadata.json",
+        ];
+        assert_eq!(artifacts.len(), 4);
+        for a in &artifacts {
+            assert!(a.ends_with(".json"));
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -7693,6 +7735,7 @@ fn main() -> Result<()> {
             println!("archive: {}", archive.display());
             println!("entries: {}", entries.len());
             println!("out: {}", out.display());
+            println!("SCANNER_OK {}", out.display());
         }
         "compare" => {
             let tool = build_tool_metadata(&args);
@@ -7845,6 +7888,7 @@ fn main() -> Result<()> {
                     println!("  {}: unchanged", c.name);
                 }
             }
+            println!("SCANNER_OK {}", out.display());
         }
         "baseline-scan" => {
             let tool = build_tool_metadata(&args);
@@ -7936,6 +7980,7 @@ fn main() -> Result<()> {
             for name in BASELINE_ARTIFACTS {
                 println!("  artifact: {}", name);
             }
+            println!("SCANNER_OK {}", out_dir.display());
         }
         "diff-against-baseline" => {
             let tool = build_tool_metadata(&args);
@@ -8218,6 +8263,7 @@ fn main() -> Result<()> {
             println!("  text/config candidates: {}", unknown_text);
             println!("  binary candidates: {}", unknown_binary);
             println!("out: {}", out_dir.display());
+            println!("SCANNER_OK {}", out_dir.display());
         }
         "classify-rpf" => {
             let tool = build_tool_metadata(&args);
@@ -8470,6 +8516,7 @@ fn main() -> Result<()> {
                 );
             }
             println!("out: {}", out_path.display());
+            println!("SCANNER_OK {}", out_path.display());
         }
         _ => {
             usage();

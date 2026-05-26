@@ -1,0 +1,29 @@
+{
+  "name": "Redux Scanner Engine",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "latest"
+    },
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "configureZshAsDefaultShell": false,
+      "installOhMyZsh": false
+    }
+  },
+  "onCreateCommand": "sudo apt-get update && sudo apt-get install -y cmake build-essential g++",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "ms-vscode.cmake-tools",
+        "vadimcn.vscode-lldb"
+      ],
+      "settings": {
+        "rust-analyzer.cargo.features": "all"
+      }
+    }
+  },
+  "postCreateCommand": "cargo build --release --manifest-path rpf_backend_rs/Cargo.toml",
+  "remoteUser": "vscode"
+}

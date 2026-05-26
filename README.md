@@ -741,3 +741,68 @@ derived from proprietary content. Store them locally only.
 
 See `examples/sample_outputs/learning_corpus_example/` for sanitized examples with
 fake paths and hashes.
+
+## R0.9: Linux and HomeOps Integration Readiness
+
+### Linux build
+
+```bash
+# Build Rust backend + C++ launcher and assemble dist/
+bash scripts/build_linux.sh
+
+# or use the package script
+bash scripts/package_linux.sh
+```
+
+### Windows build
+
+```powershell
+.\scripts\build_windows.ps1
+# or
+.\scripts\package_windows.ps1
+```
+
+Both scripts:
+- Build the Rust backend (`cargo build --release`)
+- Build the C++ launcher (CMake preferred; g++ fallback)
+- Assemble `dist/` with correct layout
+- Copy rules examples to `dist/rules/`
+- Copy `README_RUNTIME.md` to `dist/` if present
+
+### Dist layout
+
+After running a package script:
+
+```
+dist/
+├── redux_rpf_scanner(.exe)      ← C++ launcher
+├── tools/
+│   └── rpf_backend_rs(.exe)     ← Rust backend
+├── rules/
+│   ├── component_rules.json     ← optional; falls back to built-in
+│   └── target_rules.json        ← optional; falls back to built-in
+└── README_RUNTIME.md
+```
+
+The launcher automatically finds the backend at `tools/rpf_backend_rs(.exe)` relative to itself.
+Override with `--backend <path>` if needed.
+
+### HomeOps integration
+
+See [`docs/HOMEOPS_SCANNER_CONTRACT.md`](docs/HOMEOPS_SCANNER_CONTRACT.md) for the full contract.
+
+Key points:
+- HomeOps invokes the scanner as a subprocess
+- Scanner exits 0 on success, non-zero on failure
+- All output is written to `--out` folder
+- On success, scanner prints `SCANNER_OK <out_path>` as the final stdout line
+- Scanner does not require interactive input
+- Keys must be stored outside Git and outside the dist package
+
+### Devcontainer / Codespaces
+
+A `.devcontainer/devcontainer.json` is provided for Linux development in Codespaces or VS Code.
+
+It includes: Rust (latest), CMake, build-essential/g++, rust-analyzer.
+
+**Do not add GTA keys or RPF files to Codespaces.** Real RPF tests must remain on local trusted machines.
