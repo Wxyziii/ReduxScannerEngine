@@ -281,6 +281,18 @@ struct AnchorCheckResult {
     missing: Vec<String>,
 }
 
+/// Records one classification attempt (physical filename scan or logical-name fallback scan).
+#[derive(Debug, Clone, Serialize)]
+struct ClassifyAttempt {
+    physicalFileName: String,
+    logicalFileName: String,
+    entryCount: usize,
+    score: u32,
+    classification: String,
+    usedForResult: bool,
+    note: Option<String>,
+}
+
 #[derive(Debug)]
 struct Args {
     command: String,
@@ -2744,6 +2756,28 @@ fn load_baseline_fingerprint(baseline_dir: &Path) -> Result<BaselineFingerprintF
         .with_context(|| format!("failed to parse baseline fingerprint: {}", fp_path.display()))
 }
 
+/// Copies an RPF archive to a temp directory under a given logical filename.
+/// GTA V NG encryption derives the decryption key from the archive filename, so
+/// opening a renamed archive (e.g. redux.rpf) under the correct logical name
+/// (e.g. update.rpf) allows the RPF library to derive the right key.
+/// The caller must keep the returned TempDir alive while the path is used.
+fn copy_archive_to_logical_name(
+    physical_path: &Path,
+    logical_name: &str,
+) -> Result<(TempDir, PathBuf)> {
+    let temp_dir = TempDir::new()
+        .context("failed to create temp dir for logical-name classify scan")?;
+    let dest = temp_dir.path().join(logical_name);
+    fs::copy(physical_path, &dest).with_context(|| {
+        format!(
+            "failed to copy archive to logical-name temp path: {} -> {}",
+            physical_path.display(),
+            dest.display()
+        )
+    })?;
+    Ok((temp_dir, dest))
+}
+
 fn anchor_score(anchor: &str) -> i32 {
     match anchor {
         "american_rel.rpf/" => 18,
@@ -2907,6 +2941,8 @@ fn write_classification_report(
     extension_histogram: &BTreeMap<String, usize>,
     entry_count: usize,
     warnings: &[Warning],
+    attempts: &[ClassifyAttempt],
+    used_logical_archive_name: Option<&str>,
 ) -> Result<()> {
     #[derive(Serialize)]
     struct ClassifyArchiveBlock<'a> {
@@ -2950,6 +2986,8 @@ fn write_classification_report(
         missingAnchors: &'a [String],
         topLevelFolders: &'a [String],
         extensionHistogram: Vec<ExtEntry>,
+        attempts: &'a [ClassifyAttempt],
+        usedLogicalArchiveName: Option<&'a str>,
         warnings: &'a [Warning],
     }
 
@@ -2990,6 +3028,8 @@ fn write_classification_report(
         missingAnchors: missing_anchors,
         topLevelFolders: top_level_folders,
         extensionHistogram: ext_entries,
+        attempts,
+        usedLogicalArchiveName: used_logical_archive_name,
         warnings,
     };
 
@@ -3401,6 +3441,118 @@ mod tests {
         assert!(!json.contains("aes_key"));
         assert!(!json.contains("ng_key"));
         assert!(!json.contains("ng_decrypt"));
+    }
+
+    #[test]
+    fn classify_attempt_serializes_correctly() {
+        let attempt = ClassifyAttempt {
+            physicalFileName: "redux.rpf".to_string(),
+            logicalFileName: "update.rpf".to_string(),
+            entryCount: 14449,
+            score: 100,
+            classification: "obvious_update_rpf".to_string(),
+            usedForResult: true,
+            note: Some("Archive matched update.rpf tree when opened with logical name \"update.rpf\".".to_string()),
+        };
+        let json = serde_json::to_string(&attempt).unwrap();
+        assert!(json.contains("\"physicalFileName\""));
+        assert!(json.contains("\"logicalFileName\""));
+        assert!(json.contains("\"usedForResult\""));
+        assert!(json.contains("\"note\""));
+        assert!(json.contains("redux.rpf"));
+        assert!(json.contains("update.rpf"));
+    }
+
+    #[test]
+    fn classify_attempt_without_note_serializes_null() {
+        let attempt = ClassifyAttempt {
+            physicalFileName: "update.rpf".to_string(),
+            logicalFileName: "update.rpf".to_string(),
+            entryCount: 21000,
+            score: 100,
+            classification: "obvious_update_rpf".to_string(),
+            usedForResult: true,
+            note: None,
+        };
+        let json = serde_json::to_string(&attempt).unwrap();
+        assert!(json.contains("\"note\":null"));
+    }
+
+    #[test]
+    fn fallback_not_triggered_when_score_already_high() {
+        // When physical scan gives a high score, fallback is not needed.
+        let entries = make_update_like_entries();
+        let mut big_entries = entries;
+        for i in 0..8000 {
+            let path = format!("extra_{}.yvr", i);
+            big_entries.insert(
+                path.clone(),
+                EntryInfo {
+                    path: path.clone(),
+                    name: format!("extra_{}.yvr", i),
+                    extension: "yvr".to_string(),
+                    sizeBytes: 1024,
+                    sha256: String::new(),
+                    source: "update.rpf".to_string(),
+                },
+            );
+        }
+        let fp = fake_baseline_fp(21000);
+        let (score, _, _, _) = score_classify_archive(&big_entries, &fp);
+        // High score means no fallback needed
+        let needs_fallback = score < 50;
+        assert!(!needs_fallback, "Expected no fallback needed for score={}", score);
+    }
+
+    #[test]
+    fn fallback_triggered_when_score_is_low() {
+        // A small vehicle-only pack scores low and should trigger fallback.
+        let entries = make_narrow_vehicle_entries();
+        let fp = fake_baseline_fp(21000);
+        let (score, _, _, _) = score_classify_archive(&entries, &fp);
+        let needs_fallback = score < 50;
+        assert!(needs_fallback, "Expected fallback needed for score={}", score);
+    }
+
+    #[test]
+    fn fallback_skip_when_already_named_update_rpf() {
+        // If the physical filename is already update.rpf, no fallback is needed.
+        let physical_name = "update.rpf";
+        let logical_fallback_name = "update.rpf";
+        let is_already = physical_name.to_lowercase() == logical_fallback_name;
+        // Score is low but we skip fallback because name is already correct.
+        let score = 0u32;
+        let needs_fallback = !is_already && score < 50;
+        assert!(!needs_fallback, "Should not trigger fallback when already named update.rpf");
+    }
+
+    #[test]
+    fn fallback_result_wins_when_score_higher() {
+        // Simulate: physical scan → score 0, fallback scan → score 100
+        // Fallback should win.
+        let a1_score: u32 = 0;
+        let a2_score: u32 = 100;
+        let use_fallback = a2_score > a1_score;
+        assert!(use_fallback);
+        let final_score = if use_fallback { a2_score } else { a1_score };
+        assert_eq!(final_score, 100);
+        let label = classify_label_from_score(final_score);
+        assert_eq!(label, "obvious_update_rpf");
+    }
+
+    #[test]
+    fn unrelated_archive_stays_low_even_with_fallback() {
+        // A narrow vehicle pack would still score low even if opened as update.rpf name.
+        // The tree score is what matters, not just the fallback opening.
+        let entries = make_narrow_vehicle_entries();
+        let fp = fake_baseline_fp(21000);
+        let (score, _, _, _) = score_classify_archive(&entries, &fp);
+        let label = classify_label_from_score(score);
+        assert!(
+            label == "not_update_rpf" || label == "unknown_rpf",
+            "Narrow vehicle pack should remain low even if fallback runs: label={}, score={}",
+            label, score
+        );
     }
 }
 
@@ -3852,31 +4004,148 @@ fn main() -> Result<()> {
                 depth: args.depth,
             };
 
-            let (entries, _counters) = scan_archive(
-                &archive,
-                &keys,
-                args.depth,
-                scan_options,
-                None,
-                &mut warnings,
-            )?;
+            let physical_file_name = archive
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            // ── Attempt 1: physical filename ─────────────────────────────────
+            let (a1_entries_opt, a1_note) =
+                match scan_archive(&archive, &keys, args.depth, scan_options, None, &mut warnings) {
+                    Ok((entries, _)) => (Some(entries), None),
+                    Err(e) => (None, Some(format!("scan failed: {}", e))),
+                };
+
+            let (a1_score, a1_reasons, a1_matched, a1_missing, a1_count, a1_label) =
+                if let Some(ref entries) = a1_entries_opt {
+                    let (s, r, m, mis) = score_classify_archive(entries, &baseline_fp);
+                    let l = classify_label_from_score(s).to_string();
+                    (s, r, m, mis, entries.len(), l)
+                } else {
+                    (0, vec![], vec![], vec![], 0, "scan_failed".to_string())
+                };
+
+            // ── Attempt 2: logical update.rpf name fallback ───────────────────
+            // Skip fallback if archive is already named update.rpf (key derivation already correct).
+            // Skip fallback if initial score is already confident enough.
+            let logical_fallback_name = "update.rpf";
+            let is_already_update_rpf =
+                physical_file_name.to_lowercase() == logical_fallback_name;
+            let needs_fallback = !is_already_update_rpf && a1_score < 50;
+
+            let (a2_entries_opt, a2_note) = if needs_fallback {
+                match copy_archive_to_logical_name(&archive, logical_fallback_name) {
+                    Ok((temp_dir, logical_path)) => {
+                        let result = match scan_archive(
+                            &logical_path,
+                            &keys,
+                            args.depth,
+                            scan_options,
+                            None,
+                            &mut warnings,
+                        ) {
+                            Ok((entries, _)) => (Some(entries), None),
+                            Err(e) => {
+                                (None, Some(format!("logical-name scan failed: {}", e)))
+                            }
+                        };
+                        drop(temp_dir);
+                        result
+                    }
+                    Err(e) => (
+                        None,
+                        Some(format!("failed to prepare logical-name copy: {}", e)),
+                    ),
+                }
+            } else {
+                (None, None)
+            };
+
+            let (a2_score, a2_reasons, a2_matched, a2_missing, a2_count, a2_label) =
+                if let Some(ref entries) = a2_entries_opt {
+                    let (s, r, m, mis) = score_classify_archive(entries, &baseline_fp);
+                    let l = classify_label_from_score(s).to_string();
+                    (s, r, m, mis, entries.len(), l)
+                } else {
+                    (0, vec![], vec![], vec![], 0, "scan_failed".to_string())
+                };
+
+            // ── Pick best result ──────────────────────────────────────────────
+            let use_fallback = needs_fallback && a2_score > a1_score;
+            let used_logical_name: Option<&str> =
+                if use_fallback { Some(logical_fallback_name) } else { None };
+
+            let (final_score, mut final_reasons, final_matched, final_missing, final_count, final_label, final_entries_ref) =
+                if use_fallback {
+                    (a2_score, a2_reasons.clone(), a2_matched.clone(), a2_missing.clone(), a2_count, a2_label.clone(), &a2_entries_opt)
+                } else {
+                    (a1_score, a1_reasons.clone(), a1_matched.clone(), a1_missing.clone(), a1_count, a1_label.clone(), &a1_entries_opt)
+                };
+
+            // Prepend a clear reason when the fallback drove the result
+            if use_fallback {
+                final_reasons.insert(
+                    0,
+                    format!(
+                        "Archive matched update.rpf tree when opened with logical name \"{}\". \
+                         GTA V NG encryption derives decryption keys from the archive filename; \
+                         the physical name \"{}\" produced no readable tree (score={}).",
+                        logical_fallback_name, physical_file_name, a1_score
+                    ),
+                );
+            }
+
+            let final_classification = final_label.as_str();
+            let final_confidence = (final_score as f64) / 100.0;
+            let final_recommended_action = recommend_action_from_label(final_classification);
+
+            let empty_entries: BTreeMap<String, EntryInfo> = BTreeMap::new();
+            let winning_entries = final_entries_ref.as_ref().unwrap_or(&empty_entries);
+            let top_folders = collect_top_level_folders(winning_entries);
+            let hist = build_extension_histogram(winning_entries);
+
+            // ── Build attempts record ─────────────────────────────────────────
+            let mut attempts: Vec<ClassifyAttempt> = vec![ClassifyAttempt {
+                physicalFileName: physical_file_name.clone(),
+                logicalFileName: physical_file_name.clone(),
+                entryCount: a1_count,
+                score: a1_score,
+                classification: a1_label.clone(),
+                usedForResult: !use_fallback,
+                note: a1_note,
+            }];
+
+            if needs_fallback {
+                let a2_note_final = if a2_note.is_some() {
+                    a2_note
+                } else if use_fallback {
+                    Some(format!(
+                        "Archive matched update.rpf tree when opened with logical name \"{}\".",
+                        logical_fallback_name
+                    ))
+                } else {
+                    Some(format!(
+                        "Fallback scan completed (score={}) but did not exceed physical-name score ({}).",
+                        a2_score, a1_score
+                    ))
+                };
+                attempts.push(ClassifyAttempt {
+                    physicalFileName: physical_file_name.clone(),
+                    logicalFileName: logical_fallback_name.to_string(),
+                    entryCount: a2_count,
+                    score: a2_score,
+                    classification: a2_label.clone(),
+                    usedForResult: use_fallback,
+                    note: a2_note_final,
+                });
+            }
 
             let timing = Timing {
                 startedAt: format_timestamp(started_at)?,
                 finishedAt: format_timestamp(OffsetDateTime::now_utc())?,
                 durationMs: start_instant.elapsed().as_millis() as u64,
             };
-
-            let (score, reasons, matched_anchors, missing_anchors) =
-                score_classify_archive(&entries, &baseline_fp);
-
-            let classification = classify_label_from_score(score);
-            let confidence = (score as f64) / 100.0;
-            let recommended_action = recommend_action_from_label(classification);
-
-            let top_folders = collect_top_level_folders(&entries);
-            let hist = build_extension_histogram(&entries);
-            let entry_count = entries.len();
 
             write_classification_report(
                 &out_path,
@@ -3885,26 +4154,34 @@ fn main() -> Result<()> {
                 &tool,
                 &timing,
                 &scan,
-                score,
-                classification,
-                confidence,
-                recommended_action,
-                &reasons,
-                &matched_anchors,
-                &missing_anchors,
+                final_score,
+                final_classification,
+                final_confidence,
+                final_recommended_action,
+                &final_reasons,
+                &final_matched,
+                &final_missing,
                 &top_folders,
                 &hist,
-                entry_count,
+                final_count,
                 &warnings,
+                &attempts,
+                used_logical_name,
             )?;
 
             println!("classify-rpf complete");
             println!("archive: {}", archive.display());
-            println!("entries scanned: {}", entry_count);
-            println!("score: {}", score);
-            println!("classification: {}", classification);
-            println!("confidence: {:.2}", confidence);
-            println!("recommended action: {}", recommended_action);
+            println!("entries scanned: {}", final_count);
+            println!("score: {}", final_score);
+            println!("classification: {}", final_classification);
+            println!("confidence: {:.2}", final_confidence);
+            println!("recommended action: {}", final_recommended_action);
+            if use_fallback {
+                println!(
+                    "note: classified via logical name \"{}\" (GTA NG key derivation)",
+                    logical_fallback_name
+                );
+            }
             println!("out: {}", out_path.display());
         }
         _ => {

@@ -275,7 +275,7 @@ Shape summary:
 
 `treeFingerprintSha256` is a SHA-256 of sorted `"path:size"` strings. Deterministic for identical archives.
 
-## classify-rpf (R0.5)
+## classify-rpf (R0.5 / R0.5.1)
 
 `classify-rpf` quick-scans an unknown or renamed `.rpf` file and compares its internal tree structure against the clean baseline fingerprint to detect whether it is a `update.rpf` variant.
 
@@ -313,36 +313,67 @@ The classifier scores the archive based on:
 - **Size ratio** — entry count compared to the clean baseline; archives that are 30–150% of baseline size score a bonus
 - **Narrow-archive penalties** — vehicle-only or audio-only archives (no script/text files) are penalized
 
-### GTA V NG encryption note
+### GTA V NG encryption and logical-name fallback (R0.5.1)
 
-GTA V uses NG encryption where the decryption key is derived from the archive's **filename**. If a `update.rpf` is copied and renamed to `redux.rpf`, the scanner cannot decrypt its nested archives under the new name — the nested entries appear as garbled bytes.
+GTA V uses NG encryption where the decryption key is derived from the archive's **filename**. If a `update.rpf` is byte-copied and renamed to `redux.rpf`, opening it under the new name causes wrong key derivation — nested archives cannot be decrypted and entries appear as garbled bytes.
 
-This means:
-- A file that was originally `update.rpf` and renamed as a byte-identical copy → `unknown_rpf` (scanner cannot read nested content)
-- A file that was legitimately named `redux.rpf` when built → will scan correctly if the RPF library can decrypt it
+**R0.5.1 adds a logical-name fallback** to handle this case automatically:
 
-If a Redux release distributes a renamed `update.rpf` replacement as `redux.rpf`, classifying it requires first renaming the file back to `update.rpf` for key derivation, or the mod author must distribute it without NG encryption (open RPF format).
+1. The classifier first scans the archive under its physical filename.
+2. If the initial scan score is below 50 (archive appears unreadable or unrelated), and the physical name is not already `update.rpf`, the classifier transparently:
+   - Creates a temporary directory
+   - Copies the archive to `<temp>/update.rpf` (read-only operation; source is not modified)
+   - Scans the temp copy — now GTA NG key derivation uses `update.rpf` as the key name
+   - Cleans up the temp copy automatically
+3. If the fallback scan scores higher than the physical scan, the fallback result is used.
+4. The output reports both attempts in the `attempts` array so the caller can see what happened.
 
-### Output shape
+**Important:** The fallback uses the same scoring thresholds. An unrelated archive that happens to open under the `update.rpf` name will still score low if its tree doesn't match the baseline. The fallback does not lower the quality bar.
+
+### Output shape (R0.5.1)
 
 ```json
 {
   "schemaVersion": "2.0",
   "ok": true,
   "artifactType": "rpf_classification",
-  "classification": "likely_update_rpf",
-  "confidence": 0.86,
-  "score": 86,
+  "classification": "obvious_update_rpf",
+  "confidence": 1.0,
+  "score": 100,
   "recommendedAction": "import_as_update_rpf",
-  "reasons": ["..."],
+  "reasons": ["Archive matched update.rpf tree when opened with logical name \"update.rpf\"...", "..."],
   "matchedAnchors": ["american_rel.rpf/", "visualsettings.dat"],
-  "missingAnchors": ["popcycle.dat"],
+  "missingAnchors": [],
   "extensionHistogram": [{"extension": "yvr", "count": 3200}, ...],
-  "archive": { "path": "...", "fileName": "...", "sizeBytes": 0, "sha256": "..." },
+  "archive": { "path": "...", "fileName": "redux.rpf", "sizeBytes": 0, "sha256": "...", "entryCount": 14449 },
   "baseline": { "archiveFileName": "update.rpf", "treeFingerprintSha256": "..." },
+  "attempts": [
+    {
+      "physicalFileName": "redux.rpf",
+      "logicalFileName": "redux.rpf",
+      "entryCount": 541,
+      "score": 0,
+      "classification": "unknown_rpf",
+      "usedForResult": false,
+      "note": null
+    },
+    {
+      "physicalFileName": "redux.rpf",
+      "logicalFileName": "update.rpf",
+      "entryCount": 14449,
+      "score": 100,
+      "classification": "obvious_update_rpf",
+      "usedForResult": true,
+      "note": "Archive matched update.rpf tree when opened with logical name \"update.rpf\"."
+    }
+  ],
+  "usedLogicalArchiveName": "update.rpf",
   "warnings": []
 }
 ```
+
+- `attempts` — array of scan attempts (physical name first, then logical fallback if triggered)
+- `usedLogicalArchiveName` — `null` if the physical-name scan was sufficient; `"update.rpf"` if the fallback was used
 
 See `examples/sample_outputs/classify_rpf_example/classification.json` for a full sanitized example.
 
