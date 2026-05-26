@@ -1,40 +1,47 @@
 # Rust
-target/
-**/target/
-Cargo.lock.bak
+/target/
+/rpf_backend_rs/target/
+**/*.rmeta
+**/*.rlib
 
-# CMake/build
-build/
-dist/
-out/
-*.obj
-*.o
-*.pdb
-*.ilk
+# CMake / C++
+/build/
+/cmake-build-*/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Makefile
+
+# Distribution / binaries
+/dist/
 *.exe
 *.dll
-*.so
-*.dylib
+*.pdb
+*.ilk
+*.obj
+*.o
+*.a
+*.lib
+*.exp
 
-# Node/editor noise
-node_modules/
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
+# Visual Studio / IDE
+.vs/
+*.user
+*.suo
+*.sln.docstates
+*.VC.db
+*.VC.VC.opendb
 
-# Project-sensitive/runtime files
-keys/
-rpf_keys/
-*.rpf
-*.zip
-*.rar
-*.7z
+# Logs / temp
 *.log
+*.tmp
+*.temp
+*.cache
+*.bak
 
-# Generated reports can be large; keep examples intentionally under examples/
-reports/
-scans/
-diffs/
-cache/
-.cache/
+# OS
+Thumbs.db
+.DS_Store
+
+# Local artifacts
+/.copilot/
