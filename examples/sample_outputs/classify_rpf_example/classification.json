@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "rpf_classification",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.2.0",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.2.0",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2026-01-15T10:00:00.000Z",
+    "finishedAt": "2026-01-15T10:00:05.123Z",
+    "durationMs": 5123
+  },
+  "scan": {
+    "mode": "tree-only",
+    "depth": 3
+  },
+  "archive": {
+    "path": "examples/fixtures/unknown_archive.rpf",
+    "fileName": "unknown_archive.rpf",
+    "sizeBytes": 1200000000,
+    "sha256": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+  },
+  "baseline": {
+    "archiveFileName": "update.rpf",
+    "archiveSha256": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+    "treeFingerprintSha256": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  },
+  "classification": "likely_update_rpf",
+  "confidence": 0.86,
+  "score": 86,
+  "recommendedAction": "import_as_update_rpf",
+  "reasons": [
+    "Matched anchor \"visualsettings.dat\" (+14)",
+    "Matched anchor \"american_rel.rpf/\" (+18)",
+    "Matched anchor \"ptfx.rpf/\" (+12)",
+    "Matched anchor \"gta5_cache_y.dat\" (+10)",
+    "Has .yvr files (route/animation data, +8)",
+    "Has .ysc files (scripts, +6)",
+    "Has .gxt2 files (text strings, +5)",
+    "Has .ymap files (world data, +3)",
+    "Has .fxc files (shaders, +2)",
+    "Has .dat files (+1)",
+    "Has .meta files (+1)",
+    "Large archive (17000 entries, +8)",
+    "Entry count ratio 81% of baseline (17000 / 21000, +5)"
+  ],
+  "matchedAnchors": [
+    "american_rel.rpf/",
+    "ptfx.rpf/",
+    "visualsettings.dat",
+    "gta5_cache_y.dat"
+  ],
+  "missingAnchors": [
+    "scaleform_frontend.rpf/",
+    "popcycle.dat",
+    "carcols.meta",
+    "hudcolor.dat"
+  ],
+  "topLevelFolders": [
+    "american_rel.rpf",
+    "ptfx.rpf",
+    "visualsettings.dat",
+    "gta5_cache_y.dat",
+    "popcycle.dat"
+  ],
+  "extensionHistogram": [
+    { "extension": "gxt2", "count": 7800 },
+    { "extension": "yvr",  "count": 3200 },
+    { "extension": "ytd",  "count": 2400 },
+    { "extension": "ysc",  "count": 900 },
+    { "extension": "ymap", "count": 1200 },
+    { "extension": "ymt",  "count": 650 },
+    { "extension": "ypt",  "count": 450 },
+    { "extension": "dat",  "count": 38 },
+    { "extension": "meta", "count": 200 },
+    { "extension": "fxc",  "count": 360 }
+  ],
+  "stats": {
+    "entriesScanned": 17000,
+    "warnings": 0
+  },
+  "warnings": []
+}

@@ -122,6 +122,8 @@ Use the helper scripts in `scripts/` to create this layout.
 redux_rpf_scanner scan-rpf
 redux_rpf_scanner compare-rpf
 redux_rpf_scanner baseline-scan
+redux_rpf_scanner diff-against-baseline
+redux_rpf_scanner classify-rpf
 redux_rpf_scanner version
 redux_rpf_scanner validate-tools --keys <keys_dir>
 redux_rpf_scanner scan-rpf --mode <fast|targeted|deep|full>
@@ -265,15 +267,88 @@ Shape summary:
   "totalPaths": 12345,
   "treeFingerprintSha256": "...",
   "topLevelFolders": ["common", "x64", "dlc_patch"],
-  "extensionHistogram": [{"extension": "xml", "count": 312}, ...],
-  "anchorPathsFound": ["common/", "x64/", "dlc_patch/", "ptfx.rpf"],
-  "anchorPathsMissing": ["scaleform_minimap.rpf"]
+  "extensionHistogram": [{"extension": "yvr", "count": 3692}, {"extension": "gxt2", "count": 8041}, ...],
+  "anchorPathsFound": ["american_rel.rpf/", "ptfx.rpf/", "visualsettings.dat", "gta5_cache_y.dat"],
+  "anchorPathsMissing": ["scaleform_frontend.rpf/", "popcycle.dat"]
 }
 ```
 
 `treeFingerprintSha256` is a SHA-256 of sorted `"path:size"` strings. Deterministic for identical archives.
 
-## Output metadata (schema v2)
+## classify-rpf (R0.5)
+
+`classify-rpf` quick-scans an unknown or renamed `.rpf` file and compares its internal tree structure against the clean baseline fingerprint to detect whether it is a `update.rpf` variant.
+
+**Why this exists:** Redux mod packages sometimes distribute their modded `update.rpf` under a different name (e.g., `redux.rpf`, `modded.rpf`, `main.rpf`). The classifier detects these renamed files so they can be correctly imported as `update.rpf` replacements.
+
+```powershell
+.\dist\redux_rpf_scanner.exe classify-rpf `
+  --archive "path\to\unknown_archive.rpf" `
+  --baseline "path\to\baseline_output_folder" `
+  --keys "path\to\rpf_keys" `
+  --out "path\to\classification.json" `
+  --depth 3
+```
+
+The `--baseline` folder must contain `baseline_update_tree_fingerprint.json` and `baseline_metadata.json` (produced by `baseline-scan`).
+
+### Classification labels
+
+| Label | Score | Recommended action |
+|---|---|---|
+| `obvious_update_rpf` | 90–100 | `import_as_update_rpf` |
+| `likely_update_rpf` | 75–89 | `import_as_update_rpf` |
+| `possible_update_rpf` | 50–74 | `review_before_import` |
+| `not_update_rpf` | 20–49 | `skip` |
+| `unknown_rpf` | 0–19 | `review` |
+| `scan_failed` | n/a | `review_error` |
+
+### Scoring
+
+The classifier scores the archive based on:
+
+- **Anchor file matches** — presence of characteristic `update.rpf` files (`visualsettings.dat`, `gta5_cache_y.dat`, `popcycle.dat`, `carcols.meta`, `hudcolor.dat`) and nested RPF prefixes (`american_rel.rpf/`, `ptfx.rpf/`, `scaleform_frontend.rpf/`)
+- **Extension signals** — `.yvr` (route data), `.ysc` (scripts), `.gxt2` (text strings), `.ymap` (world data), `.fxc` (shaders) are strongly characteristic of `update.rpf`
+- **Entry count** — large archives (>5000 entries) score higher; very small archives are penalized
+- **Size ratio** — entry count compared to the clean baseline; archives that are 30–150% of baseline size score a bonus
+- **Narrow-archive penalties** — vehicle-only or audio-only archives (no script/text files) are penalized
+
+### GTA V NG encryption note
+
+GTA V uses NG encryption where the decryption key is derived from the archive's **filename**. If a `update.rpf` is copied and renamed to `redux.rpf`, the scanner cannot decrypt its nested archives under the new name — the nested entries appear as garbled bytes.
+
+This means:
+- A file that was originally `update.rpf` and renamed as a byte-identical copy → `unknown_rpf` (scanner cannot read nested content)
+- A file that was legitimately named `redux.rpf` when built → will scan correctly if the RPF library can decrypt it
+
+If a Redux release distributes a renamed `update.rpf` replacement as `redux.rpf`, classifying it requires first renaming the file back to `update.rpf` for key derivation, or the mod author must distribute it without NG encryption (open RPF format).
+
+### Output shape
+
+```json
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "rpf_classification",
+  "classification": "likely_update_rpf",
+  "confidence": 0.86,
+  "score": 86,
+  "recommendedAction": "import_as_update_rpf",
+  "reasons": ["..."],
+  "matchedAnchors": ["american_rel.rpf/", "visualsettings.dat"],
+  "missingAnchors": ["popcycle.dat"],
+  "extensionHistogram": [{"extension": "yvr", "count": 3200}, ...],
+  "archive": { "path": "...", "fileName": "...", "sizeBytes": 0, "sha256": "..." },
+  "baseline": { "archiveFileName": "update.rpf", "treeFingerprintSha256": "..." },
+  "warnings": []
+}
+```
+
+See `examples/sample_outputs/classify_rpf_example/classification.json` for a full sanitized example.
+
+### Do not commit real classification artifacts
+
+Do not commit `classification.json` outputs generated from real game files. They are derived from proprietary game data. Store them locally only.
 
 All scan and compare JSON reports use `schemaVersion: "2.0"`.
 

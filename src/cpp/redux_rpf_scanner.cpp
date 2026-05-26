@@ -169,6 +169,9 @@ Commands:
                   --keys <keys_dir> --out <diff_output_dir>
                   [--backend <rpf_backend_rs.exe>] [--depth 2]
                   [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
+  classify-rpf    --archive <unknown.rpf> --baseline <baseline_output_dir>
+                  --keys <keys_dir> --out <classification.json>
+                  [--backend <rpf_backend_rs.exe>] [--depth 3]
   version
   validate-tools  --keys <keys_dir> [--backend <rpf_backend_rs.exe>]
 
@@ -176,6 +179,7 @@ Examples:
   redux_rpf_scanner.exe compare-rpf --clean "C:\clean\update.rpf" --modded "C:\modded\update.rpf" --keys "C:\rpf_keys" --out "diff.json"
   redux_rpf_scanner.exe baseline-scan --archive "C:\clean\update.rpf" --keys "C:\rpf_keys" --out "C:\baseline_out"
   redux_rpf_scanner.exe diff-against-baseline --modded "C:\modded\update.rpf" --baseline "C:\baseline_out" --keys "C:\rpf_keys" --out "C:\diff_out"
+  redux_rpf_scanner.exe classify-rpf --archive "C:\redux.rpf" --baseline "C:\baseline_out" --keys "C:\rpf_keys" --out "C:\classify_redux.json"
 
 Notes:
   - This app needs the Rust backend built from rpf-rs/rpf-archive.
@@ -196,6 +200,9 @@ Notes:
       full_modded_tree.json
       clean_vs_modded_diff.json
       diff_summary.json
+  - classify-rpf quick-scans an unknown .rpf and compares its tree structure
+      against the clean baseline to detect renamed update.rpf files.
+      Output: classification.json with score, label, recommendedAction.
   - This app does not provide or extract keys.
 )";
 }
@@ -359,6 +366,27 @@ static std::vector<std::string> build_backend_args(const Args& args) {
         v.push_back("diff-against-baseline");
         v.push_back("--modded");
         v.push_back(path_to_utf8(args.modded));
+        v.push_back("--baseline");
+        v.push_back(path_to_utf8(args.baseline));
+        v.push_back("--keys");
+        v.push_back(path_to_utf8(args.keys));
+        v.push_back("--out");
+        v.push_back(path_to_utf8(args.out));
+        v.push_back("--depth");
+        v.push_back(std::to_string(args.depth));
+        v.push_back("--scanner-name");
+        v.push_back(SCANNER_NAME);
+        v.push_back("--scanner-version");
+        v.push_back(SCANNER_VERSION);
+    } else if (args.command == "classify-rpf") {
+        require_file(args.archive, "archive");
+        if (args.baseline.empty()) throw std::runtime_error("Missing required --baseline path");
+        if (!fs::exists(args.baseline)) throw std::runtime_error("--baseline dir does not exist: " + path_to_utf8(args.baseline));
+        if (args.out.empty()) throw std::runtime_error("Missing required --out path");
+
+        v.push_back("classify-rpf");
+        v.push_back("--archive");
+        v.push_back(path_to_utf8(args.archive));
         v.push_back("--baseline");
         v.push_back(path_to_utf8(args.baseline));
         v.push_back("--keys");
@@ -703,7 +731,7 @@ static int validate_tools(const Args& args) {
 }
 
 static int run_backend(const Args& args) {
-    if (args.command != "compare-rpf" && args.command != "scan-rpf" && args.command != "baseline-scan" && args.command != "diff-against-baseline") {
+    if (args.command != "compare-rpf" && args.command != "scan-rpf" && args.command != "baseline-scan" && args.command != "diff-against-baseline" && args.command != "classify-rpf") {
         usage();
         throw std::runtime_error("Unknown command: " + args.command);
     }

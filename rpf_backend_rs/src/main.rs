@@ -319,6 +319,9 @@ Commands:
                 --keys <keys_dir> --out <diff_output_dir>
                 [--depth 2]
                 [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
+  classify-rpf  --archive <unknown.rpf> --baseline <baseline_output_dir>
+                --keys <keys_dir> --out <classification.json>
+                [--depth 3]
   version
 
 Notes:
@@ -328,9 +331,8 @@ Notes:
   - --all and --targets-only are deprecated; use --mode instead.
   - baseline-scan writes: full_clean_manifest.json, full_clean_tree.json,
     baseline_update_tree_fingerprint.json, baseline_metadata.json into the --out folder.
-  - diff-against-baseline reads baseline from --baseline folder and writes:
-    full_modded_manifest.json, full_modded_tree.json,
-    clean_vs_modded_diff.json, diff_summary.json into the --out folder.
+  - classify-rpf quick-scans an unknown .rpf and compares its tree against the clean baseline
+    to detect renamed update.rpf files. Output: classification.json.
 "#
     );
 }
@@ -618,16 +620,19 @@ fn collect_top_level_folders(entries: &BTreeMap<String, EntryInfo>) -> Vec<Strin
     folders.into_iter().collect()
 }
 
+/// Anchor paths for update.rpf detection.
+/// update.rpf uses a flat structure — no common/ or x64/ directory prefixes.
+/// Nested RPFs appear as path prefixes like "ptfx.rpf/core.ypt".
 const ANCHOR_PATHS: &[&str] = &[
-    "common/",
-    "common/data/",
-    "common/data/timecycle/",
-    "common/data/visualsettings.dat",
-    "x64/",
-    "dlc_patch/",
+    "american_rel.rpf/",        // nested RPF with GXT2 text strings — highly characteristic
+    "ptfx.rpf/",                // nested particle effects RPF — highly characteristic
+    "scaleform_frontend.rpf/",  // nested scaleform UI RPF — characteristic
+    "visualsettings.dat",       // visual settings — only in update.rpf
+    "gta5_cache_y.dat",         // game cache — only in update.rpf
+    "popcycle.dat",             // population cycle data
+    "carcols.meta",             // car color definitions
+    "hudcolor.dat",             // HUD color config
 ];
-
-const ANCHOR_BASENAMES: &[&str] = &["ptfx.rpf", "scaleform_minimap.rpf"];
 
 fn check_anchor_paths(entries: &BTreeMap<String, EntryInfo>) -> AnchorCheckResult {
     let mut found = Vec::new();
@@ -642,14 +647,6 @@ fn check_anchor_paths(entries: &BTreeMap<String, EntryInfo>) -> AnchorCheckResul
             }
         }
         missing.push(anchor.to_string());
-    }
-
-    for bname in ANCHOR_BASENAMES {
-        if entries.values().any(|e| e.name == *bname) {
-            found.push(bname.to_string());
-        } else {
-            missing.push(bname.to_string());
-        }
     }
 
     AnchorCheckResult { found, missing }
@@ -2723,7 +2720,283 @@ fn write_diff_summary(
     Ok(())
 }
 
-#[cfg(test)]
+// ── RPF Classifier ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct FingerprintArchiveId {
+    archiveFileName: String,
+    archiveSha256: String,
+}
+
+#[derive(Deserialize)]
+struct BaselineFingerprintFile {
+    archive: FingerprintArchiveId,
+    totalPaths: usize,
+    treeFingerprintSha256: String,
+    anchorPathsFound: Vec<String>,
+}
+
+fn load_baseline_fingerprint(baseline_dir: &Path) -> Result<BaselineFingerprintFile> {
+    let fp_path = baseline_dir.join("baseline_update_tree_fingerprint.json");
+    let contents = fs::read_to_string(&fp_path)
+        .with_context(|| format!("failed to read baseline fingerprint: {}", fp_path.display()))?;
+    serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse baseline fingerprint: {}", fp_path.display()))
+}
+
+fn anchor_score(anchor: &str) -> i32 {
+    match anchor {
+        "american_rel.rpf/" => 18,
+        "ptfx.rpf/" => 12,
+        "scaleform_frontend.rpf/" => 10,
+        "visualsettings.dat" => 14,
+        "gta5_cache_y.dat" => 10,
+        "popcycle.dat" => 8,
+        "carcols.meta" => 7,
+        "hudcolor.dat" => 6,
+        _ => 2,
+    }
+}
+
+/// Returns (clamped_score, reasons, matched_anchors, missing_anchors).
+fn score_classify_archive(
+    entries: &BTreeMap<String, EntryInfo>,
+    baseline_fp: &BaselineFingerprintFile,
+) -> (u32, Vec<String>, Vec<String>, Vec<String>) {
+    let mut score: i32 = 0;
+    let mut reasons: Vec<String> = Vec::new();
+
+    let anchor_result = check_anchor_paths(entries);
+    for a in &anchor_result.found {
+        let pts = anchor_score(a);
+        score += pts;
+        reasons.push(format!("Matched anchor \"{}\" (+{})", a, pts));
+    }
+
+    let hist = build_extension_histogram(entries);
+    // Strong update.rpf extension signals
+    if hist.contains_key("yvr") {
+        score += 8;
+        reasons.push(format!("Has .yvr files (route/animation data, +8)"));
+    }
+    if hist.contains_key("ysc") {
+        score += 6;
+        reasons.push(format!("Has .ysc files (scripts, +6)"));
+    }
+    if hist.contains_key("gxt2") {
+        score += 5;
+        reasons.push(format!("Has .gxt2 files (text strings, +5)"));
+    }
+    if hist.contains_key("ymap") {
+        score += 3;
+        reasons.push(format!("Has .ymap files (world data, +3)"));
+    }
+    if hist.contains_key("fxc") {
+        score += 2;
+        reasons.push(format!("Has .fxc files (shaders, +2)"));
+    }
+    // Weaker legacy hints
+    if hist.contains_key("xml") {
+        score += 1;
+        reasons.push("Has .xml files (+1)".to_string());
+    }
+    if hist.contains_key("dat") {
+        score += 1;
+        reasons.push("Has .dat files (+1)".to_string());
+    }
+    if hist.contains_key("meta") {
+        score += 1;
+        reasons.push("Has .meta files (+1)".to_string());
+    }
+
+    let n = entries.len();
+    let baseline_n = baseline_fp.totalPaths;
+    if n > 5000 {
+        score += 8;
+        reasons.push(format!("Large archive ({} entries, +8)", n));
+    } else if n > 1000 {
+        score += 4;
+        reasons.push(format!("Medium-large archive ({} entries, +4)", n));
+    } else if n > 500 {
+        reasons.push(format!("Small-medium archive ({} entries)", n));
+    } else if n < 100 {
+        score -= 30;
+        reasons.push(format!("Very small archive ({} entries, -30)", n));
+    } else if n < 500 {
+        score -= 10;
+        reasons.push(format!("Small archive ({} entries, -10)", n));
+    }
+
+    // Bonus if size is in a reasonable fraction of the baseline
+    if baseline_n > 0 {
+        let ratio = n as f64 / baseline_n as f64;
+        if ratio >= 0.3 && ratio <= 1.5 {
+            score += 5;
+            reasons.push(format!(
+                "Entry count ratio {:.0}% of baseline ({} / {}, +5)",
+                ratio * 100.0,
+                n,
+                baseline_n
+            ));
+        } else if ratio < 0.1 {
+            score -= 15;
+            reasons.push(format!(
+                "Entry count ratio {:.0}% of baseline — much smaller than expected (-15)",
+                ratio * 100.0
+            ));
+        }
+    }
+
+    // Penalty: narrow DLC/vehicle/audio archive
+    let ext_keys: BTreeSet<&str> = hist.keys().map(|s| s.as_str()).collect();
+    let vehicle_exts: BTreeSet<&str> = ["yft", "ytd", "ydr", "ydd", "yld"].iter().copied().collect();
+    let audio_exts: BTreeSet<&str> = ["awc", "rel"].iter().copied().collect();
+    let update_signals: BTreeSet<&str> = ["yvr", "ysc", "gxt2"].iter().copied().collect();
+
+    let has_update_signals = !ext_keys.is_disjoint(&update_signals);
+    let only_vehicles = ext_keys.is_subset(&vehicle_exts);
+    let only_audio = ext_keys.is_subset(&audio_exts);
+
+    if !has_update_signals && only_vehicles {
+        score -= 25;
+        reasons.push("Appears to be vehicle-only asset pack (no script/text files, -25)".to_string());
+    } else if !has_update_signals && only_audio {
+        score -= 25;
+        reasons.push("Appears to be audio-only pack (no script/text files, -25)".to_string());
+    }
+
+    let clamped = score.clamp(0, 100) as u32;
+    (clamped, reasons, anchor_result.found, anchor_result.missing)
+}
+
+fn classify_label_from_score(score: u32) -> &'static str {
+    match score {
+        90..=100 => "obvious_update_rpf",
+        75..=89 => "likely_update_rpf",
+        50..=74 => "possible_update_rpf",
+        20..=49 => "not_update_rpf",
+        _ => "unknown_rpf",
+    }
+}
+
+fn recommend_action_from_label(label: &str) -> &'static str {
+    match label {
+        "obvious_update_rpf" | "likely_update_rpf" => "import_as_update_rpf",
+        "possible_update_rpf" => "review_before_import",
+        "not_update_rpf" => "skip",
+        "scan_failed" => "review_error",
+        _ => "review",
+    }
+}
+
+fn write_classification_report(
+    out: &Path,
+    archive_identity: &ArchiveIdentity,
+    baseline_fp: &BaselineFingerprintFile,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    scan: &ScanMetadata,
+    score: u32,
+    classification: &str,
+    confidence: f64,
+    recommended_action: &str,
+    reasons: &[String],
+    matched_anchors: &[String],
+    missing_anchors: &[String],
+    top_level_folders: &[String],
+    extension_histogram: &BTreeMap<String, usize>,
+    entry_count: usize,
+    warnings: &[Warning],
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct ClassifyArchiveBlock<'a> {
+        path: &'a str,
+        fileName: &'a str,
+        sizeBytes: u64,
+        sha256: &'a str,
+        entryCount: usize,
+    }
+
+    #[derive(Serialize)]
+    struct ClassifyBaselineBlock<'a> {
+        archiveFileName: &'a str,
+        archiveSha256: &'a str,
+        treeFingerprintSha256: &'a str,
+        totalPaths: usize,
+    }
+
+    #[derive(Serialize)]
+    struct ExtEntry {
+        extension: String,
+        count: usize,
+    }
+
+    #[derive(Serialize)]
+    struct ClassificationReport<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        scan: &'a ScanMetadata,
+        archive: ClassifyArchiveBlock<'a>,
+        baseline: ClassifyBaselineBlock<'a>,
+        classification: &'a str,
+        confidence: f64,
+        score: u32,
+        recommendedAction: &'a str,
+        reasons: &'a [String],
+        matchedAnchors: &'a [String],
+        missingAnchors: &'a [String],
+        topLevelFolders: &'a [String],
+        extensionHistogram: Vec<ExtEntry>,
+        warnings: &'a [Warning],
+    }
+
+    let ext_entries: Vec<ExtEntry> = extension_histogram
+        .iter()
+        .map(|(k, &v)| ExtEntry {
+            extension: k.clone(),
+            count: v,
+        })
+        .collect();
+
+    let report = ClassificationReport {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "rpf_classification",
+        tool,
+        timing,
+        scan,
+        archive: ClassifyArchiveBlock {
+            path: &archive_identity.archivePath,
+            fileName: &archive_identity.archiveFileName,
+            sizeBytes: archive_identity.archiveSizeBytes,
+            sha256: &archive_identity.archiveSha256,
+            entryCount: entry_count,
+        },
+        baseline: ClassifyBaselineBlock {
+            archiveFileName: &baseline_fp.archive.archiveFileName,
+            archiveSha256: &baseline_fp.archive.archiveSha256,
+            treeFingerprintSha256: &baseline_fp.treeFingerprintSha256,
+            totalPaths: baseline_fp.totalPaths,
+        },
+        classification,
+        confidence,
+        score,
+        recommendedAction: recommended_action,
+        reasons,
+        matchedAnchors: matched_anchors,
+        missingAnchors: missing_anchors,
+        topLevelFolders: top_level_folders,
+        extensionHistogram: ext_entries,
+        warnings,
+    };
+
+    let json = serde_json::to_string_pretty(&report)?;
+    fs::write(out, json)?;
+    Ok(())
+}
 mod tests {
     use super::*;
 
@@ -2866,13 +3139,13 @@ mod tests {
 
     #[test]
     fn anchor_paths_detection_finds_expected() {
-        let entries = make_test_entries();
+        let entries = make_update_like_entries();
         let result = check_anchor_paths(&entries);
-        assert!(result.found.contains(&"common/".to_string()));
-        assert!(result.found.contains(&"x64/".to_string()));
-        assert!(result.found.contains(&"dlc_patch/".to_string()));
-        assert!(result.found.contains(&"ptfx.rpf".to_string()));
-        assert!(result.missing.contains(&"scaleform_minimap.rpf".to_string()));
+        assert!(result.found.contains(&"american_rel.rpf/".to_string()));
+        assert!(result.found.contains(&"ptfx.rpf/".to_string()));
+        assert!(result.found.contains(&"visualsettings.dat".to_string()));
+        assert!(result.found.contains(&"gta5_cache_y.dat".to_string()));
+        assert!(result.found.contains(&"scaleform_frontend.rpf/".to_string()));
     }
 
     #[test]
@@ -2921,6 +3194,213 @@ mod tests {
         assert_eq!(parsed.files.len(), 1);
         assert_eq!(parsed.files[0].sizeBytes, 1024);
         assert_eq!(parsed.files[0].extension, "xml");
+    }
+
+    fn make_update_like_entries() -> BTreeMap<String, EntryInfo> {
+        let mut m = BTreeMap::new();
+        for (path, size) in &[
+            // Anchor files — flat root-level files characteristic of update.rpf
+            ("visualsettings.dat", 8192u32),
+            ("gta5_cache_y.dat", 65536),
+            ("popcycle.dat", 4096),
+            ("carcols.meta", 8192),
+            ("hudcolor.dat", 2048),
+            // Nested RPF anchors
+            ("american_rel.rpf/abgail2.gxt2", 512),
+            ("american_rel.rpf/acultau.gxt2", 512),
+            ("ptfx.rpf/core.ypt", 40960),
+            ("ptfx.rpf/cut_arena.ypt", 20480),
+            ("scaleform_frontend.rpf/busy_spinner.gfx", 8192),
+            // Characteristic extension files
+            ("playeranims.yvr", 102400),
+            ("walk_cycle.yvr", 98304),
+            ("main.ysc", 204800),
+            ("missions.ysc", 512000),
+            ("world_north.ymap", 32768),
+            ("ambient.fxc", 16384),
+            ("carvariations.meta", 4096),
+            ("weaponfx.dat", 8192),
+        ] {
+            let norm = normalize_path(path);
+            let ext = norm.rsplit('.').next().unwrap_or("").to_string();
+            let name = norm.rsplit('/').next().unwrap_or(&norm).to_string();
+            m.insert(
+                norm.clone(),
+                EntryInfo {
+                    path: norm,
+                    name,
+                    extension: ext,
+                    sizeBytes: *size as usize,
+                    sha256: String::new(),
+                    source: "update.rpf".to_string(),
+                },
+            );
+        }
+        m
+    }
+
+    fn make_narrow_vehicle_entries() -> BTreeMap<String, EntryInfo> {
+        let mut m = BTreeMap::new();
+        for (path, size) in &[
+            ("vehicles/infernus.yft", 102400u32),
+            ("vehicles/infernus.ytd", 204800),
+            ("vehicles/sultan.yft", 98304),
+            ("vehicles/sultan.ytd", 196608),
+        ] {
+            let norm = normalize_path(path);
+            let ext = norm.rsplit('.').next().unwrap_or("").to_string();
+            let name = norm.rsplit('/').next().unwrap_or(&norm).to_string();
+            m.insert(
+                norm.clone(),
+                EntryInfo {
+                    path: norm,
+                    name,
+                    extension: ext,
+                    sizeBytes: *size as usize,
+                    sha256: String::new(),
+                    source: "dlc_vehicles.rpf".to_string(),
+                },
+            );
+        }
+        m
+    }
+
+    fn fake_baseline_fp(total_paths: usize) -> BaselineFingerprintFile {
+        BaselineFingerprintFile {
+            archive: FingerprintArchiveId {
+                archiveFileName: "update.rpf".to_string(),
+                archiveSha256: "deadbeef".to_string(),
+            },
+            totalPaths: total_paths,
+            treeFingerprintSha256: "abc123".to_string(),
+            anchorPathsFound: vec![
+                "american_rel.rpf/".to_string(),
+                "ptfx.rpf/".to_string(),
+                "scaleform_frontend.rpf/".to_string(),
+                "visualsettings.dat".to_string(),
+                "gta5_cache_y.dat".to_string(),
+                "popcycle.dat".to_string(),
+                "carcols.meta".to_string(),
+                "hudcolor.dat".to_string(),
+            ],
+        }
+    }
+
+    #[test]
+    fn classifier_scores_update_like_archive_as_likely_or_obvious() {
+        let entries = make_update_like_entries();
+        // Add more entries so size hint kicks in
+        let mut big_entries = entries;
+        for i in 0..8000 {
+            let path = format!("x64/models/extra_{}.ydr", i);
+            big_entries.insert(
+                path.clone(),
+                EntryInfo {
+                    path: path.clone(),
+                    name: format!("extra_{}.ydr", i),
+                    extension: "ydr".to_string(),
+                    sizeBytes: 1024,
+                    sha256: String::new(),
+                    source: "update.rpf".to_string(),
+                },
+            );
+        }
+        let fp = fake_baseline_fp(21000);
+        let (score, _reasons, matched, _missing) = score_classify_archive(&big_entries, &fp);
+        assert!(score >= 75, "expected >=75, got {}", score);
+        assert!(matched.contains(&"visualsettings.dat".to_string()));
+        let label = classify_label_from_score(score);
+        assert!(
+            label == "likely_update_rpf" || label == "obvious_update_rpf",
+            "unexpected label: {}",
+            label
+        );
+    }
+
+    #[test]
+    fn classifier_scores_vehicle_pack_as_not_update_rpf() {
+        let entries = make_narrow_vehicle_entries();
+        let fp = fake_baseline_fp(21000);
+        let (score, _reasons, _matched, _missing) = score_classify_archive(&entries, &fp);
+        let label = classify_label_from_score(score);
+        assert!(
+            label == "not_update_rpf" || label == "unknown_rpf",
+            "expected not/unknown, got {} (score={})",
+            label,
+            score
+        );
+    }
+
+    #[test]
+    fn classifier_label_thresholds_correct() {
+        assert_eq!(classify_label_from_score(100), "obvious_update_rpf");
+        assert_eq!(classify_label_from_score(90), "obvious_update_rpf");
+        assert_eq!(classify_label_from_score(89), "likely_update_rpf");
+        assert_eq!(classify_label_from_score(75), "likely_update_rpf");
+        assert_eq!(classify_label_from_score(74), "possible_update_rpf");
+        assert_eq!(classify_label_from_score(50), "possible_update_rpf");
+        assert_eq!(classify_label_from_score(49), "not_update_rpf");
+        assert_eq!(classify_label_from_score(20), "not_update_rpf");
+        assert_eq!(classify_label_from_score(19), "unknown_rpf");
+        assert_eq!(classify_label_from_score(0), "unknown_rpf");
+    }
+
+    #[test]
+    fn recommend_action_mapping_correct() {
+        assert_eq!(recommend_action_from_label("obvious_update_rpf"), "import_as_update_rpf");
+        assert_eq!(recommend_action_from_label("likely_update_rpf"), "import_as_update_rpf");
+        assert_eq!(recommend_action_from_label("possible_update_rpf"), "review_before_import");
+        assert_eq!(recommend_action_from_label("not_update_rpf"), "skip");
+        assert_eq!(recommend_action_from_label("unknown_rpf"), "review");
+        assert_eq!(recommend_action_from_label("scan_failed"), "review_error");
+    }
+
+    #[test]
+    fn baseline_fingerprint_deserializes_from_json() {
+        let json = r#"{
+            "schemaVersion": "2.0",
+            "ok": true,
+            "artifactType": "baseline_update_tree_fingerprint",
+            "archive": {
+                "archivePath": "examples/fixtures/clean_update.rpf",
+                "archiveFileName": "update.rpf",
+                "archiveSizeBytes": 1000000,
+                "archiveSha256": "abc123def456"
+            },
+            "mode": "full",
+            "depth": 3,
+            "totalPaths": 21000,
+            "treeFingerprintSha256": "fingerprint_hash_here",
+            "topLevelFolders": ["common", "x64"],
+            "extensionHistogram": [],
+            "anchorPathsFound": ["american_rel.rpf/", "ptfx.rpf/", "visualsettings.dat"],
+            "anchorPathsMissing": ["hudcolor.dat"]
+        }"#;
+        let parsed: BaselineFingerprintFile = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.totalPaths, 21000);
+        assert_eq!(parsed.archive.archiveFileName, "update.rpf");
+        assert_eq!(parsed.treeFingerprintSha256, "fingerprint_hash_here");
+        assert!(parsed.anchorPathsFound.contains(&"american_rel.rpf/".to_string()));
+    }
+
+    #[test]
+    fn classification_report_no_key_exposure() {
+        let entries = make_update_like_entries();
+        let fp = fake_baseline_fp(21000);
+        let (score, reasons, matched, missing) = score_classify_archive(&entries, &fp);
+        let label = classify_label_from_score(score);
+        let json = serde_json::to_string(&serde_json::json!({
+            "score": score,
+            "label": label,
+            "reasons": reasons,
+            "matched": matched,
+            "missing": missing,
+        }))
+        .unwrap();
+        assert!(!json.contains("password"));
+        assert!(!json.contains("aes_key"));
+        assert!(!json.contains("ng_key"));
+        assert!(!json.contains("ng_decrypt"));
     }
 }
 
@@ -3334,6 +3814,98 @@ fn main() -> Result<()> {
             println!("removed: {}", removed);
             println!("modified: {}", modified);
             println!("out: {}", out_dir.display());
+        }
+        "classify-rpf" => {
+            let tool = build_tool_metadata(&args);
+            let started_at = OffsetDateTime::now_utc();
+            let start_instant = Instant::now();
+            let archive = args.archive.clone().context("classify-rpf requires --archive")?;
+            let baseline_dir = args.baseline.clone().context("classify-rpf requires --baseline")?;
+            let keys_path = args.keys.clone().context("classify-rpf requires --keys")?;
+            let out_path = args.out.clone().context("classify-rpf requires --out")?;
+
+            if let Some(parent) = out_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    fs::create_dir_all(parent).with_context(|| {
+                        format!("failed to create output parent dir: {}", parent.display())
+                    })?;
+                }
+            }
+
+            let archive_identity = build_archive_identity(&archive)?;
+            let baseline_fp = load_baseline_fingerprint(&baseline_dir)?;
+
+            let keys = GtaKeys::load_from_path(&keys_path).with_context(|| {
+                format!("failed to load keys directory from {}", keys_path.display())
+            })?;
+
+            let mut warnings = Vec::new();
+
+            // Tree-only scan: no hashing (fast), nested allowed, all entries
+            let scan_options = ScanOptions {
+                targets_only: false,
+                hash_entries: false,
+                allow_nested: true,
+            };
+            let scan = ScanMetadata {
+                mode: "tree-only".to_string(),
+                depth: args.depth,
+            };
+
+            let (entries, _counters) = scan_archive(
+                &archive,
+                &keys,
+                args.depth,
+                scan_options,
+                None,
+                &mut warnings,
+            )?;
+
+            let timing = Timing {
+                startedAt: format_timestamp(started_at)?,
+                finishedAt: format_timestamp(OffsetDateTime::now_utc())?,
+                durationMs: start_instant.elapsed().as_millis() as u64,
+            };
+
+            let (score, reasons, matched_anchors, missing_anchors) =
+                score_classify_archive(&entries, &baseline_fp);
+
+            let classification = classify_label_from_score(score);
+            let confidence = (score as f64) / 100.0;
+            let recommended_action = recommend_action_from_label(classification);
+
+            let top_folders = collect_top_level_folders(&entries);
+            let hist = build_extension_histogram(&entries);
+            let entry_count = entries.len();
+
+            write_classification_report(
+                &out_path,
+                &archive_identity,
+                &baseline_fp,
+                &tool,
+                &timing,
+                &scan,
+                score,
+                classification,
+                confidence,
+                recommended_action,
+                &reasons,
+                &matched_anchors,
+                &missing_anchors,
+                &top_folders,
+                &hist,
+                entry_count,
+                &warnings,
+            )?;
+
+            println!("classify-rpf complete");
+            println!("archive: {}", archive.display());
+            println!("entries scanned: {}", entry_count);
+            println!("score: {}", score);
+            println!("classification: {}", classification);
+            println!("confidence: {:.2}", confidence);
+            println!("recommended action: {}", recommended_action);
+            println!("out: {}", out_path.display());
         }
         _ => {
             usage();
