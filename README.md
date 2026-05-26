@@ -536,3 +536,71 @@ docs/COPILOT_TASKS.md
 ```
 
 Start with **Task 1: version + validate-tools**. Do not rewrite the whole scanner at once.
+
+---
+
+## Unknown pattern discovery (R0.6)
+
+After `diff-against-baseline`, the scanner automatically generates unknown-pattern discovery artifacts alongside the standard diff files. These capture everything the component classifier did **not** recognize, so new Redux patterns can be discovered by future analyzers or LLM review.
+
+### Why it exists
+
+The component classifier only knows about explicitly defined components (tracer, hit_effect, sky_timecycle, etc.). A real Redux mod changes hundreds of files that don't match any known rule. R0.6 captures all those unknown changes so they are not silently ignored.
+
+### Generated artifacts
+
+All files are written to the same `--out` folder as the rest of the diff:
+
+| File | Description |
+|------|-------------|
+| `unknown_changes.json` | Full list of changes where no component matched |
+| `unknown_text_candidates.json` | Subset: readable/config files (.xml, .dat, .meta, .ymt, etc.) |
+| `unknown_binary_candidates.json` | Subset: binary files requiring a dedicated analyzer |
+| `candidate_patterns.json` | Changes grouped by extension and nested archive prefix |
+| `llm_review_queue.jsonl` | Metadata-only tasks for future LLM review (one JSON object per line) |
+| `unknown_summary.json` | Compact summary counts + top extensions + top folders |
+
+### Unknown classes
+
+Each entry in `unknown_changes.json` has an `unknownClass` field:
+
+| Class | Meaning |
+|-------|---------|
+| `unknown_config_candidate` | Extension like `.xml`, `.dat`, `.meta`, `.ini` — likely readable |
+| `unknown_text_candidate` | Extension like `.ymt`, `.ymap`, `.ytyp` — possibly readable |
+| `unknown_binary_candidate` | Extension like `.ytd`, `.ypt`, `.gfx`, `.ydr` — needs analyzer |
+| `unknown_nested_archive_candidate` | Nested `.rpf` archive — needs recursive scan |
+| `unknown_low_priority` | Small file, unknown extension, low impact |
+
+### llm_review_queue.jsonl
+
+This file contains **metadata only** — no file contents, no raw assets. Each line is a JSON object:
+
+```json
+{"task":"review_unknown_change","path":"ambientpedmodelsets.meta","status":"modified","extension":"meta","unknownClass":"unknown_config_candidate","context":{"folder":"root","nestedArchivePath":null,"sizeDeltaBytes":979},"question":"What GTA/Redux component might this changed file relate to? Answer as hypothesis only."}
+```
+
+**The scanner does not call any LLM.** This file is a queue for an external pipeline or human review.
+
+### candidate_patterns.json
+
+Changes are grouped by shared extension and nested archive prefix. Each group with 2+ files becomes a candidate pattern:
+
+```json
+{
+  "patternId": "pattern_001",
+  "title": "Unknown .dat cluster",
+  "candidateComponent": "config_or_text",
+  "confidence": "high",
+  "evidence": ["shared extension: dat", "file count: 28"],
+  "files": ["decals.dat", "entityfx.dat", "..."],
+  "recommendedNextStep": "run DAT/META/XML analyzer in R0.7"
+}
+```
+
+### Do not commit real unknown-pattern artifacts
+
+Do not commit `unknown_changes.json`, `candidate_patterns.json`, `llm_review_queue.jsonl`, or any other diff output generated from real game files. They are derived from proprietary GTA V data. Store them locally only.
+
+See `examples/sample_outputs/unknown_patterns_example/` for sanitized examples with fake paths and hashes.
+

@@ -2722,11 +2722,696 @@ fn write_diff_summary(
             "full_modded_tree.json".to_string(),
             "clean_vs_modded_diff.json".to_string(),
             "diff_summary.json".to_string(),
+            "unknown_changes.json".to_string(),
+            "unknown_text_candidates.json".to_string(),
+            "unknown_binary_candidates.json".to_string(),
+            "candidate_patterns.json".to_string(),
+            "llm_review_queue.jsonl".to_string(),
+            "unknown_summary.json".to_string(),
         ],
         warnings,
     };
 
     let out = out_dir.join("diff_summary.json");
+    let json = serde_json::to_string_pretty(&summary)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+// ── Unknown Pattern Discovery ────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+struct UnknownEntry {
+    path: String,
+    status: String,
+    name: String,
+    extension: String,
+    cleanSizeBytes: usize,
+    moddedSizeBytes: usize,
+    sizeDeltaBytes: i64,
+    cleanSha256: String,
+    moddedSha256: String,
+    categoryGuess: String,
+    unknownClass: String,
+    analyzerRequired: bool,
+    safeForAiTextExtraction: bool,
+    nestedArchivePath: Option<String>,
+    reason: String,
+    priority: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct UnknownTextEntry {
+    path: String,
+    extension: String,
+    status: String,
+    cleanSizeBytes: usize,
+    moddedSizeBytes: usize,
+    sizeDeltaBytes: i64,
+    reason: String,
+    futureAnalyzer: String,
+    priority: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct UnknownBinaryEntry {
+    path: String,
+    extension: String,
+    status: String,
+    cleanSizeBytes: usize,
+    moddedSizeBytes: usize,
+    sizeDeltaBytes: i64,
+    reason: String,
+    futureAnalyzer: String,
+    priority: String,
+    analyzerRequired: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CandidatePattern {
+    patternId: String,
+    title: String,
+    candidateComponent: String,
+    confidence: String,
+    evidence: Vec<String>,
+    files: Vec<String>,
+    recommendedNextStep: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LlmReviewTask {
+    task: String,
+    path: String,
+    status: String,
+    extension: String,
+    unknownClass: String,
+    context: LlmReviewContext,
+    question: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct LlmReviewContext {
+    folder: String,
+    nestedArchivePath: Option<String>,
+    sizeDeltaBytes: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct UnknownSummary {
+    schemaVersion: String,
+    ok: bool,
+    artifactType: String,
+    totalUnknown: usize,
+    textCandidates: usize,
+    binaryCandidates: usize,
+    analyzerRequired: usize,
+    topUnknownExtensions: Vec<ExtCount>,
+    topUnknownFolders: Vec<FolderCount>,
+    candidatePatternCount: usize,
+    recommendedNextPhase: String,
+    warnings: Vec<Warning>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ExtCount {
+    extension: String,
+    count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FolderCount {
+    folder: String,
+    count: usize,
+}
+
+fn unknown_class_for_ext(ext: &str) -> &'static str {
+    match ext {
+        "xml" | "dat" | "meta" | "txt" | "json" | "ini" | "cfg" | "nametable" => {
+            "unknown_config_candidate"
+        }
+        "ymt" | "ymap" | "ytyp" => "unknown_text_candidate",
+        "ytd" => "unknown_binary_candidate",
+        "ypt" => "unknown_binary_candidate",
+        "gfx" | "swf" => "unknown_binary_candidate",
+        "ydr" | "yft" | "ybn" | "ydd" | "yld" => "unknown_binary_candidate",
+        "awc" | "rel" => "unknown_binary_candidate",
+        "rpf" => "unknown_nested_archive_candidate",
+        _ => "unknown_binary_candidate",
+    }
+}
+
+fn future_analyzer_for_ext(ext: &str) -> &'static str {
+    match ext {
+        "xml" => "xml_analyzer",
+        "dat" | "cfg" | "ini" | "nametable" => "dat_config_analyzer",
+        "meta" | "ymt" => "meta_analyzer",
+        "ymap" | "ytyp" => "text_diff_analyzer",
+        "txt" | "json" => "text_diff_analyzer",
+        "ytd" => "ytd_texture_analyzer",
+        "gfx" | "swf" => "gfx_swf_analyzer",
+        "ypt" => "ypt_particle_analyzer",
+        "rpf" => "rpf_nested_analyzer",
+        _ => "unknown_binary_analyzer",
+    }
+}
+
+fn is_text_candidate_ext(ext: &str) -> bool {
+    matches!(
+        ext,
+        "xml"
+            | "dat"
+            | "meta"
+            | "txt"
+            | "json"
+            | "ini"
+            | "cfg"
+            | "ymt"
+            | "ymap"
+            | "ytyp"
+            | "nametable"
+    )
+}
+
+fn analyzer_required_for_ext(ext: &str) -> bool {
+    !is_text_candidate_ext(ext)
+}
+
+fn safe_for_ai_text(ext: &str) -> bool {
+    is_text_candidate_ext(ext)
+}
+
+fn priority_for_ext(ext: &str, size_delta: i64) -> &'static str {
+    match ext {
+        "xml" | "dat" | "meta" | "ymt" | "ypt" | "gfx" | "rpf" => "high",
+        "ytd" | "ymap" | "ytyp" | "ydr" | "yft" => "medium",
+        _ => {
+            if size_delta.abs() > 100_000 {
+                "medium"
+            } else {
+                "low"
+            }
+        }
+    }
+}
+
+fn nested_archive_path_from_change(change: &Change) -> Option<String> {
+    if change.parentPath.contains(".rpf") {
+        Some(change.parentPath.clone())
+    } else if change.path.contains(".rpf/") {
+        let p = normalize_path(&change.path);
+        if let Some(idx) = p.find(".rpf/") {
+            Some(p[..idx + 4].to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// A change is "truly unknown" when the only component is the sentinel "unknown"
+/// (set by build_rich_metadata when nothing matched) or when components is empty.
+fn is_truly_unknown_change(c: &Change) -> bool {
+    c.components.is_empty() || c.components == ["unknown"]
+}
+
+fn build_unknown_entries(changes: &[Change]) -> Vec<UnknownEntry> {
+    changes
+        .iter()
+        .filter(|c| is_truly_unknown_change(c))
+        .map(|c| {
+            let ext = c.extension.as_str();
+            let unknown_class = unknown_class_for_ext(ext);
+            let nested_archive_path = nested_archive_path_from_change(c);
+            let priority = priority_for_ext(ext, c.sizeDelta);
+            let category_guess = if c.category != "unknown_binary" {
+                c.category.clone()
+            } else {
+                match ext {
+                    "xml" | "dat" | "meta" | "ini" | "cfg" | "txt" => {
+                        "config_or_text".to_string()
+                    }
+                    "ytd" => "texture_dictionary".to_string(),
+                    "ypt" => "particle_container".to_string(),
+                    "gfx" => "scaleform_ui".to_string(),
+                    "rpf" => "nested_archive".to_string(),
+                    _ => "unknown_binary".to_string(),
+                }
+            };
+
+            UnknownEntry {
+                path: c.path.clone(),
+                status: c.status.clone(),
+                name: c.basename.clone(),
+                extension: c.extension.clone(),
+                cleanSizeBytes: c.cleanSize,
+                moddedSizeBytes: c.moddedSize,
+                sizeDeltaBytes: c.sizeDelta,
+                cleanSha256: c.cleanSha256.clone(),
+                moddedSha256: c.moddedSha256.clone(),
+                categoryGuess: category_guess,
+                unknownClass: unknown_class.to_string(),
+                analyzerRequired: analyzer_required_for_ext(ext),
+                safeForAiTextExtraction: safe_for_ai_text(ext),
+                nestedArchivePath: nested_archive_path,
+                reason: c.reason.clone(),
+                priority: priority.to_string(),
+            }
+        })
+        .collect()
+}
+
+fn recommended_next_step_for_pattern(ext: Option<&str>, archive_group: bool) -> &'static str {
+    if archive_group {
+        return "run nested RPF scan";
+    }
+
+    match ext.unwrap_or("") {
+        "xml" | "dat" | "meta" | "txt" | "json" | "ini" | "cfg" | "ymt" | "ymap"
+        | "ytyp" | "nametable" => "run DAT/META/XML analyzer in R0.7",
+        "ytd" => "run YTD texture analyzer",
+        "ypt" => "run YPT particle analyzer",
+        "rpf" => "run nested RPF scan",
+        "gfx" | "swf" => "run GFX/SWF analyzer",
+        _ => "investigate manually or wait for R0.7",
+    }
+}
+
+fn pattern_confidence(file_count: usize) -> &'static str {
+    if file_count >= 5 {
+        "high"
+    } else {
+        "medium"
+    }
+}
+
+fn write_unknown_changes(
+    out_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    scan: &ScanMetadata,
+    entries: &[UnknownEntry],
+    warnings: &[Warning],
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct UnknownStats {
+        totalUnknown: usize,
+        textCandidates: usize,
+        binaryCandidates: usize,
+        analyzerRequired: usize,
+    }
+
+    #[derive(Serialize)]
+    struct UnknownChangesFile<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        scan: &'a ScanMetadata,
+        stats: UnknownStats,
+        entries: &'a [UnknownEntry],
+        warnings: &'a [Warning],
+    }
+
+    let report = UnknownChangesFile {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "unknown_changes",
+        tool,
+        timing,
+        scan,
+        stats: UnknownStats {
+            totalUnknown: entries.len(),
+            textCandidates: entries
+                .iter()
+                .filter(|entry| is_text_candidate_ext(&entry.extension))
+                .count(),
+            binaryCandidates: entries
+                .iter()
+                .filter(|entry| !is_text_candidate_ext(&entry.extension))
+                .count(),
+            analyzerRequired: entries.iter().filter(|entry| entry.analyzerRequired).count(),
+        },
+        entries,
+        warnings,
+    };
+
+    let out = out_dir.join("unknown_changes.json");
+    let json = serde_json::to_string_pretty(&report)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_unknown_text_candidates(
+    out_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    entries: &[UnknownEntry],
+    warnings: &[Warning],
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct UnknownCandidatesStats {
+        total: usize,
+    }
+
+    #[derive(Serialize)]
+    struct UnknownTextFile<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        stats: UnknownCandidatesStats,
+        entries: Vec<UnknownTextEntry>,
+        warnings: &'a [Warning],
+    }
+
+    let filtered_entries: Vec<UnknownTextEntry> = entries
+        .iter()
+        .filter(|entry| is_text_candidate_ext(&entry.extension))
+        .map(|entry| UnknownTextEntry {
+            path: entry.path.clone(),
+            extension: entry.extension.clone(),
+            status: entry.status.clone(),
+            cleanSizeBytes: entry.cleanSizeBytes,
+            moddedSizeBytes: entry.moddedSizeBytes,
+            sizeDeltaBytes: entry.sizeDeltaBytes,
+            reason: entry.reason.clone(),
+            futureAnalyzer: future_analyzer_for_ext(&entry.extension).to_string(),
+            priority: entry.priority.clone(),
+        })
+        .collect();
+
+    let report = UnknownTextFile {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "unknown_text_candidates",
+        tool,
+        timing,
+        stats: UnknownCandidatesStats {
+            total: filtered_entries.len(),
+        },
+        entries: filtered_entries,
+        warnings,
+    };
+
+    let out = out_dir.join("unknown_text_candidates.json");
+    let json = serde_json::to_string_pretty(&report)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_unknown_binary_candidates(
+    out_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    entries: &[UnknownEntry],
+    warnings: &[Warning],
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct UnknownCandidatesStats {
+        total: usize,
+    }
+
+    #[derive(Serialize)]
+    struct UnknownBinaryFile<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        stats: UnknownCandidatesStats,
+        entries: Vec<UnknownBinaryEntry>,
+        warnings: &'a [Warning],
+    }
+
+    let filtered_entries: Vec<UnknownBinaryEntry> = entries
+        .iter()
+        .filter(|entry| !is_text_candidate_ext(&entry.extension))
+        .map(|entry| UnknownBinaryEntry {
+            path: entry.path.clone(),
+            extension: entry.extension.clone(),
+            status: entry.status.clone(),
+            cleanSizeBytes: entry.cleanSizeBytes,
+            moddedSizeBytes: entry.moddedSizeBytes,
+            sizeDeltaBytes: entry.sizeDeltaBytes,
+            reason: entry.reason.clone(),
+            futureAnalyzer: future_analyzer_for_ext(&entry.extension).to_string(),
+            priority: entry.priority.clone(),
+            analyzerRequired: entry.analyzerRequired,
+        })
+        .collect();
+
+    let report = UnknownBinaryFile {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "unknown_binary_candidates",
+        tool,
+        timing,
+        stats: UnknownCandidatesStats {
+            total: filtered_entries.len(),
+        },
+        entries: filtered_entries,
+        warnings,
+    };
+
+    let out = out_dir.join("unknown_binary_candidates.json");
+    let json = serde_json::to_string_pretty(&report)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_candidate_patterns(
+    out_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    entries: &[UnknownEntry],
+) -> Result<usize> {
+    #[derive(Serialize)]
+    struct CandidatePatternStats {
+        totalPatterns: usize,
+        totalFiles: usize,
+    }
+
+    #[derive(Serialize)]
+    struct CandidatePatternFile<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        stats: CandidatePatternStats,
+        patterns: Vec<CandidatePattern>,
+    }
+
+    let mut ext_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for entry in entries {
+        ext_groups
+            .entry(entry.extension.clone())
+            .or_default()
+            .push(entry.path.clone());
+    }
+
+    let mut archive_groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for entry in entries {
+        if let Some(ref nested_archive_path) = entry.nestedArchivePath {
+            archive_groups
+                .entry(nested_archive_path.clone())
+                .or_default()
+                .push(entry.path.clone());
+        }
+    }
+
+    let mut patterns = Vec::new();
+    let mut pattern_index = 1usize;
+
+    for (extension, mut files) in ext_groups {
+        if files.len() < 2 {
+            continue;
+        }
+
+        files.sort();
+        let extension_label = if extension.is_empty() {
+            "no_extension".to_string()
+        } else {
+            extension.clone()
+        };
+        let candidate_component = entries
+            .iter()
+            .find(|entry| entry.extension == extension)
+            .map(|entry| entry.categoryGuess.clone())
+            .unwrap_or_else(|| "unknown_binary".to_string());
+
+        patterns.push(CandidatePattern {
+            patternId: format!("pattern_{:03}", pattern_index),
+            title: format!("Unknown .{} cluster", extension_label),
+            candidateComponent: candidate_component,
+            confidence: pattern_confidence(files.len()).to_string(),
+            evidence: vec![
+                format!("shared extension: {}", extension_label),
+                format!("file count: {}", files.len()),
+            ],
+            files,
+            recommendedNextStep: recommended_next_step_for_pattern(Some(&extension), false)
+                .to_string(),
+        });
+        pattern_index += 1;
+    }
+
+    for (archive, mut files) in archive_groups {
+        if files.len() < 2 {
+            continue;
+        }
+
+        files.sort();
+        patterns.push(CandidatePattern {
+            patternId: format!("pattern_{:03}", pattern_index),
+            title: format!("Unknown nested archive cluster in {}", archive),
+            candidateComponent: "nested_archive".to_string(),
+            confidence: pattern_confidence(files.len()).to_string(),
+            evidence: vec![
+                format!("nested archive: {}", archive),
+                format!("file count: {}", files.len()),
+            ],
+            files,
+            recommendedNextStep: recommended_next_step_for_pattern(None, true).to_string(),
+        });
+        pattern_index += 1;
+    }
+
+    let pattern_count = patterns.len();
+    let total_files = patterns.iter().map(|pattern| pattern.files.len()).sum();
+    let report = CandidatePatternFile {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "candidate_patterns",
+        tool,
+        timing,
+        stats: CandidatePatternStats {
+            totalPatterns: pattern_count,
+            totalFiles: total_files,
+        },
+        patterns,
+    };
+
+    let out = out_dir.join("candidate_patterns.json");
+    let json = serde_json::to_string_pretty(&report)?;
+    fs::write(&out, json)?;
+    Ok(pattern_count)
+}
+
+fn write_llm_review_queue(out_dir: &Path, entries: &[UnknownEntry]) -> Result<()> {
+    let mut lines = Vec::new();
+
+    for entry in entries {
+        let should_enqueue = entry.unknownClass == "unknown_text_candidate"
+            || entry.unknownClass == "unknown_config_candidate"
+            || (entry.priority == "high" && entry.unknownClass == "unknown_binary_candidate");
+
+        if !should_enqueue {
+            continue;
+        }
+
+        let folder = {
+            let parent = parent_path(&entry.path);
+            if parent.is_empty() {
+                "root".to_string()
+            } else {
+                parent
+            }
+        };
+
+        let task = LlmReviewTask {
+            task: "review_unknown_change".to_string(),
+            path: entry.path.clone(),
+            status: entry.status.clone(),
+            extension: entry.extension.clone(),
+            unknownClass: entry.unknownClass.clone(),
+            context: LlmReviewContext {
+                folder,
+                nestedArchivePath: entry.nestedArchivePath.clone(),
+                sizeDeltaBytes: entry.sizeDeltaBytes,
+            },
+            question: "What GTA/Redux component might this changed file relate to? Answer as hypothesis only.".to_string(),
+        };
+
+        lines.push(serde_json::to_string(&task)?);
+    }
+
+    let out = out_dir.join("llm_review_queue.jsonl");
+    fs::write(&out, lines.join("\n"))?;
+    Ok(())
+}
+
+fn write_unknown_summary(
+    out_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    entries: &[UnknownEntry],
+    pattern_count: usize,
+    warnings: &[Warning],
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct UnknownSummaryFile<'a> {
+        #[serde(flatten)]
+        summary: UnknownSummary,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+    }
+
+    let mut extension_counts = BTreeMap::new();
+    for entry in entries {
+        *extension_counts.entry(entry.extension.clone()).or_insert(0usize) += 1;
+    }
+    let mut top_unknown_extensions: Vec<ExtCount> = extension_counts
+        .into_iter()
+        .map(|(extension, count)| ExtCount { extension, count })
+        .collect();
+    top_unknown_extensions.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.extension.cmp(&b.extension)));
+    top_unknown_extensions.truncate(10);
+
+    let mut folder_counts = BTreeMap::new();
+    for entry in entries {
+        if let Some((folder, _)) = entry.path.split_once('/') {
+            if !folder.is_empty() {
+                *folder_counts.entry(folder.to_string()).or_insert(0usize) += 1;
+            }
+        }
+    }
+    let mut top_unknown_folders: Vec<FolderCount> = folder_counts
+        .into_iter()
+        .map(|(folder, count)| FolderCount { folder, count })
+        .collect();
+    top_unknown_folders.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.folder.cmp(&b.folder)));
+    top_unknown_folders.truncate(10);
+
+    let summary = UnknownSummaryFile {
+        summary: UnknownSummary {
+            schemaVersion: SCHEMA_VERSION.to_string(),
+            ok: true,
+            artifactType: "unknown_summary".to_string(),
+            totalUnknown: entries.len(),
+            textCandidates: entries
+                .iter()
+                .filter(|entry| is_text_candidate_ext(&entry.extension))
+                .count(),
+            binaryCandidates: entries
+                .iter()
+                .filter(|entry| !is_text_candidate_ext(&entry.extension))
+                .count(),
+            analyzerRequired: entries.iter().filter(|entry| entry.analyzerRequired).count(),
+            topUnknownExtensions: top_unknown_extensions,
+            topUnknownFolders: top_unknown_folders,
+            candidatePatternCount: pattern_count,
+            recommendedNextPhase: "R0.7 XML/DAT/META analyzers".to_string(),
+            warnings: warnings.to_vec(),
+        },
+        tool,
+        timing,
+    };
+
+    let out = out_dir.join("unknown_summary.json");
     let json = serde_json::to_string_pretty(&summary)?;
     fs::write(&out, json)?;
     Ok(())
@@ -3554,6 +4239,190 @@ mod tests {
             label, score
         );
     }
+
+    #[test]
+    fn unknown_class_xml_is_config_candidate() {
+        assert_eq!(unknown_class_for_ext("xml"), "unknown_config_candidate");
+    }
+
+    #[test]
+    fn unknown_class_ytd_is_binary_candidate() {
+        assert_eq!(unknown_class_for_ext("ytd"), "unknown_binary_candidate");
+    }
+
+    #[test]
+    fn unknown_class_rpf_is_nested_archive_candidate() {
+        assert_eq!(
+            unknown_class_for_ext("rpf"),
+            "unknown_nested_archive_candidate"
+        );
+    }
+
+    #[test]
+    fn is_text_candidate_ext_detects_correctly() {
+        assert!(is_text_candidate_ext("xml"));
+        assert!(is_text_candidate_ext("dat"));
+        assert!(is_text_candidate_ext("meta"));
+        assert!(!is_text_candidate_ext("ytd"));
+        assert!(!is_text_candidate_ext("ypt"));
+        assert!(!is_text_candidate_ext("rpf"));
+    }
+
+    #[test]
+    fn build_unknown_entries_filters_known_components() {
+        let known_change = Change {
+            path: "ptfx.rpf/core.ypt".to_string(),
+            status: "modified".to_string(),
+            cleanSize: 1000,
+            moddedSize: 900,
+            cleanSha256: "abc".to_string(),
+            moddedSha256: "def".to_string(),
+            extension: "ypt".to_string(),
+            basename: "core.ypt".to_string(),
+            parentPath: "ptfx.rpf".to_string(),
+            sizeDelta: -100,
+            sizeDeltaPercent: Some(-10.0),
+            category: "particle_container".to_string(),
+            components: vec!["tracer".to_string()],
+            editorNeeded: vec![],
+            risk: "medium".to_string(),
+            likelyPattern: "particle_container_reduction".to_string(),
+            confidence: "high".to_string(),
+            warning: None,
+            reason: "size and sha256 differ".to_string(),
+        };
+        let unknown_change = Change {
+            path: "somefile.dat".to_string(),
+            status: "modified".to_string(),
+            cleanSize: 500,
+            moddedSize: 600,
+            cleanSha256: "aaa".to_string(),
+            moddedSha256: "bbb".to_string(),
+            extension: "dat".to_string(),
+            basename: "somefile.dat".to_string(),
+            parentPath: String::new(),
+            sizeDelta: 100,
+            sizeDeltaPercent: Some(20.0),
+            category: "unknown_binary".to_string(),
+            components: vec!["unknown".to_string()],
+            editorNeeded: vec![],
+            risk: "unknown".to_string(),
+            likelyPattern: "unknown_binary_change".to_string(),
+            confidence: "low".to_string(),
+            warning: None,
+            reason: "size and sha256 differ".to_string(),
+        };
+        let changes = vec![known_change, unknown_change];
+        let entries = build_unknown_entries(&changes);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "somefile.dat");
+        assert_eq!(entries[0].unknownClass, "unknown_config_candidate");
+        assert!(entries[0].safeForAiTextExtraction);
+    }
+
+    #[test]
+    fn build_unknown_entries_nested_archive_path_detected() {
+        let change = Change {
+            path: "american_rel.rpf/some_file.gxt2".to_string(),
+            status: "added".to_string(),
+            cleanSize: 0,
+            moddedSize: 200,
+            cleanSha256: String::new(),
+            moddedSha256: "ccc".to_string(),
+            extension: "gxt2".to_string(),
+            basename: "some_file.gxt2".to_string(),
+            parentPath: "american_rel.rpf".to_string(),
+            sizeDelta: 200,
+            sizeDeltaPercent: None,
+            category: "unknown_binary".to_string(),
+            components: vec!["unknown".to_string()],
+            editorNeeded: vec![],
+            risk: "unknown".to_string(),
+            likelyPattern: "asset_added".to_string(),
+            confidence: "low".to_string(),
+            warning: None,
+            reason: "file exists only in modded archive".to_string(),
+        };
+        let entries = build_unknown_entries(&[change]);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].nestedArchivePath.is_some());
+    }
+
+    #[test]
+    fn llm_review_task_serializes_correctly() {
+        let task = LlmReviewTask {
+            task: "review_unknown_change".to_string(),
+            path: "somefile.dat".to_string(),
+            status: "modified".to_string(),
+            extension: "dat".to_string(),
+            unknownClass: "unknown_config_candidate".to_string(),
+            context: LlmReviewContext {
+                folder: "root".to_string(),
+                nestedArchivePath: None,
+                sizeDeltaBytes: 100,
+            },
+            question: "What GTA/Redux component might this changed file relate to? Answer as hypothesis only.".to_string(),
+        };
+        let json = serde_json::to_string(&task).unwrap();
+        assert!(json.contains("review_unknown_change"));
+        assert!(json.contains("somefile.dat"));
+        assert!(!json.contains("password"));
+        assert!(!json.contains("key"));
+    }
+
+    #[test]
+    fn unknown_summary_counts_are_correct() {
+        let entries = vec![
+            UnknownEntry {
+                path: "a.xml".to_string(),
+                status: "modified".to_string(),
+                name: "a.xml".to_string(),
+                extension: "xml".to_string(),
+                cleanSizeBytes: 100,
+                moddedSizeBytes: 200,
+                sizeDeltaBytes: 100,
+                cleanSha256: String::new(),
+                moddedSha256: String::new(),
+                categoryGuess: "config_or_text".to_string(),
+                unknownClass: "unknown_config_candidate".to_string(),
+                analyzerRequired: false,
+                safeForAiTextExtraction: true,
+                nestedArchivePath: None,
+                reason: "changed".to_string(),
+                priority: "high".to_string(),
+            },
+            UnknownEntry {
+                path: "b.ytd".to_string(),
+                status: "modified".to_string(),
+                name: "b.ytd".to_string(),
+                extension: "ytd".to_string(),
+                cleanSizeBytes: 1000,
+                moddedSizeBytes: 900,
+                sizeDeltaBytes: -100,
+                cleanSha256: String::new(),
+                moddedSha256: String::new(),
+                categoryGuess: "texture_dictionary".to_string(),
+                unknownClass: "unknown_binary_candidate".to_string(),
+                analyzerRequired: true,
+                safeForAiTextExtraction: false,
+                nestedArchivePath: None,
+                reason: "changed".to_string(),
+                priority: "medium".to_string(),
+            },
+        ];
+        let text_count = entries
+            .iter()
+            .filter(|entry| is_text_candidate_ext(&entry.extension))
+            .count();
+        let binary_count = entries
+            .iter()
+            .filter(|entry| !is_text_candidate_ext(&entry.extension))
+            .count();
+        let analyzer_count = entries.iter().filter(|entry| entry.analyzerRequired).count();
+        assert_eq!(text_count, 1);
+        assert_eq!(binary_count, 1);
+        assert_eq!(analyzer_count, 1);
+    }
 }
 
 fn main() -> Result<()> {
@@ -3953,9 +4822,34 @@ fn main() -> Result<()> {
                 &components,
             )?;
 
+            let unknown_entries = build_unknown_entries(&changes);
+            write_unknown_changes(&out_dir, &tool, &timing, &scan, &unknown_entries, &warnings)?;
+            write_unknown_text_candidates(&out_dir, &tool, &timing, &unknown_entries, &warnings)?;
+            write_unknown_binary_candidates(&out_dir, &tool, &timing, &unknown_entries, &warnings)?;
+            let pattern_count =
+                write_candidate_patterns(&out_dir, &tool, &timing, &unknown_entries)?;
+            write_llm_review_queue(&out_dir, &unknown_entries)?;
+            write_unknown_summary(
+                &out_dir,
+                &tool,
+                &timing,
+                &unknown_entries,
+                pattern_count,
+                &warnings,
+            )?;
+
             let added = changes.iter().filter(|c| c.status == "added").count();
             let removed = changes.iter().filter(|c| c.status == "removed").count();
             let modified = changes.iter().filter(|c| c.status == "modified").count();
+            let unknown_count = unknown_entries.len();
+            let unknown_text = unknown_entries
+                .iter()
+                .filter(|entry| is_text_candidate_ext(&entry.extension))
+                .count();
+            let unknown_binary = unknown_entries
+                .iter()
+                .filter(|entry| !is_text_candidate_ext(&entry.extension))
+                .count();
 
             println!("diff-against-baseline complete");
             println!("modded: {}", modded.display());
@@ -3965,6 +4859,9 @@ fn main() -> Result<()> {
             println!("added: {}", added);
             println!("removed: {}", removed);
             println!("modified: {}", modified);
+            println!("unknown changes: {}", unknown_count);
+            println!("  text/config candidates: {}", unknown_text);
+            println!("  binary candidates: {}", unknown_binary);
             println!("out: {}", out_dir.display());
         }
         "classify-rpf" => {

@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "unknown_text_candidates",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.2.0",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.2.0",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2025-01-01T00:00:00Z",
+    "finishedAt": "2025-01-01T00:00:03Z",
+    "durationMs": 3000
+  },
+  "stats": {
+    "total": 2
+  },
+  "entries": [
+    {
+      "path": "ambientpedmodelsets.meta",
+      "extension": "meta",
+      "status": "modified",
+      "cleanSizeBytes": 12000,
+      "moddedSizeBytes": 12979,
+      "sizeDeltaBytes": 979,
+      "reason": "size and sha256 differ",
+      "futureAnalyzer": "meta_analyzer",
+      "priority": "high"
+    },
+    {
+      "path": "animpostfx.ymt",
+      "extension": "ymt",
+      "status": "modified",
+      "cleanSizeBytes": 8000,
+      "moddedSizeBytes": 10496,
+      "sizeDeltaBytes": 2496,
+      "reason": "size and sha256 differ",
+      "futureAnalyzer": "meta_analyzer",
+      "priority": "high"
+    }
+  ],
+  "warnings": []
+}

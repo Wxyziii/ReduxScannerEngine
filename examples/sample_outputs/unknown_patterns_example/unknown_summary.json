@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "unknown_summary",
+  "totalUnknown": 3,
+  "textCandidates": 2,
+  "binaryCandidates": 1,
+  "analyzerRequired": 1,
+  "topUnknownExtensions": [
+    { "extension": "ytd", "count": 1 },
+    { "extension": "meta", "count": 1 },
+    { "extension": "ymt", "count": 1 }
+  ],
+  "topUnknownFolders": [
+    { "folder": "scaleform_generic.rpf", "count": 1 }
+  ],
+  "candidatePatternCount": 2,
+  "recommendedNextPhase": "R0.7 XML/DAT/META analyzers",
+  "warnings": [],
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.2.0",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.2.0",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2025-01-01T00:00:00Z",
+    "finishedAt": "2025-01-01T00:00:03Z",
+    "durationMs": 3000
+  }
+}
