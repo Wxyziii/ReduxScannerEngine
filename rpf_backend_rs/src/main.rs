@@ -79,6 +79,8 @@ struct RulesMetadata {
     targetRulesSource: String,
     targetRulesPath: Option<String>,
     targetRulesVersion: String,
+    rulesDir: Option<String>,
+    usedFallbackRules: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,7 +199,9 @@ struct RichMetadata {
 #[derive(Debug, Clone, Serialize)]
 struct EntryInfo {
     path: String,
-    size: usize,
+    name: String,
+    extension: String,
+    sizeBytes: usize,
     sha256: String,
     source: String,
 }
@@ -257,30 +261,18 @@ struct ComponentReport {
     files: Vec<ComponentFileHit>,
 }
 
-#[derive(Debug, Serialize)]
-struct Report {
-    schemaVersion: String,
-    tool: ToolMetadata,
-    timing: Timing,
-    scan: ScanMetadata,
-    rules: RulesMetadata,
-    ok: bool,
-    backend: String,
-    cleanInput: String,
-    moddedInput: String,
-    keysPath: String,
-    depth: usize,
-    stats: Stats,
-    warnings: Vec<Warning>,
-    components: Vec<ComponentReport>,
-    allChanges: Vec<Change>,
+#[derive(Debug, Clone, Serialize)]
+struct ArchiveIdentity {
+    archivePath: String,
+    archiveFileName: String,
+    archiveSizeBytes: u64,
+    archiveSha256: String,
 }
 
-#[derive(Debug, Serialize)]
-struct Stats {
-    cleanEntries: usize,
-    moddedEntries: usize,
-    changedEntries: usize,
+#[derive(Debug, Default)]
+struct ScanCounters {
+    target_entries: usize,
+    nested_archives_opened: usize,
 }
 
 #[derive(Debug)]
@@ -472,6 +464,41 @@ fn sha256_hex(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hex::encode(hasher.finalize())
+}
+
+fn hash_file(path: &Path) -> Result<String> {
+    use std::io::{BufReader, Read};
+    let file = fs::File::open(path)
+        .with_context(|| format!("failed to open file for hashing: {}", path.display()))?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .with_context(|| format!("read error while hashing {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn build_archive_identity(path: &Path) -> Result<ArchiveIdentity> {
+    let meta = fs::metadata(path)
+        .with_context(|| format!("failed to stat archive: {}", path.display()))?;
+    let sha256 = hash_file(path)?;
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    Ok(ArchiveIdentity {
+        archivePath: path.display().to_string(),
+        archiveFileName: file_name,
+        archiveSizeBytes: meta.len(),
+        archiveSha256: sha256,
+    })
 }
 
 fn ensure_parent_dir(out: &Path) -> Result<()> {
@@ -856,6 +883,8 @@ fn load_rules(args: &Args, warnings: &mut Vec<Warning>) -> Result<LoadedRules> {
             targetRulesSource: target_source,
             targetRulesPath: target_path_meta,
             targetRulesVersion: target_version,
+            rulesDir: args.rules_dir.as_ref().map(|p| p.display().to_string()),
+            usedFallbackRules: rules_fallback_used,
         },
     })
 }
@@ -1173,9 +1202,10 @@ fn scan_archive(
     options: ScanOptions,
     target_rules: Option<&TargetRules>,
     warnings: &mut Vec<Warning>,
-) -> Result<BTreeMap<String, EntryInfo>> {
+) -> Result<(BTreeMap<String, EntryInfo>, ScanCounters)> {
     let temp = TempDir::new().context("failed to create temp directory")?;
     let mut map = BTreeMap::new();
+    let mut counters = ScanCounters::default();
 
     scan_archive_inner(
         archive_path,
@@ -1187,9 +1217,10 @@ fn scan_archive(
         &mut map,
         "",
         temp.path(),
+        &mut counters,
     )?;
 
-    Ok(map)
+    Ok((map, counters))
 }
 
 fn scan_archive_inner(
@@ -1202,6 +1233,7 @@ fn scan_archive_inner(
     map: &mut BTreeMap<String, EntryInfo>,
     prefix: &str,
     temp_root: &Path,
+    counters: &mut ScanCounters,
 ) -> Result<()> {
     let file = RpfFile::open(archive_path, Some(keys))
         .with_context(|| format!("failed to open RPF archive: {}", archive_path.display()))?;
@@ -1224,14 +1256,18 @@ fn scan_archive_inner(
                 key.clone(),
                 EntryInfo {
                     path: joined.clone(),
-                    size: data.len(),
+                    name: basename(&joined),
+                    extension: extension(&joined),
+                    sizeBytes: data.len(),
                     sha256,
                     source: archive_path.display().to_string(),
                 },
             );
+            counters.target_entries += 1;
         }
 
         if options.allow_nested && depth > 0 && is_nested_rpf_target(&joined) {
+            counters.nested_archives_opened += 1;
             let safe_name = sha256_hex(&data);
             let nested_path = temp_root.join(format!("nested_{}.rpf", safe_name));
 
@@ -1255,6 +1291,7 @@ fn scan_archive_inner(
                 map,
                 &joined,
                 temp_root,
+                counters,
             ) {
                 push_warning(
                     warnings,
@@ -1289,16 +1326,16 @@ fn diff_maps(
     for key in keys {
         match (clean.get(&key), modded.get(&key)) {
             (Some(c), Some(m)) => {
-                if c.size != m.size || c.sha256 != m.sha256 {
-                    let reason = if c.size != m.size && c.sha256 != m.sha256 {
+                if c.sizeBytes != m.sizeBytes || c.sha256 != m.sha256 {
+                    let reason = if c.sizeBytes != m.sizeBytes && c.sha256 != m.sha256 {
                         "size and sha256 differ"
-                    } else if c.size != m.size {
+                    } else if c.sizeBytes != m.sizeBytes {
                         "size differs"
                     } else {
                         "sha256 differs"
                     };
 
-                    let mut meta = build_rich_metadata(&c.path, "modified", c.size, m.size);
+                    let mut meta = build_rich_metadata(&c.path, "modified", c.sizeBytes, m.sizeBytes);
                     if let Some(rules) = component_rules {
                         let matches = match_component_rules(&c.path, rules);
                         apply_component_rule_metadata(&mut meta, &matches);
@@ -1307,8 +1344,8 @@ fn diff_maps(
                     changes.push(Change {
                         path: c.path.clone(),
                         status: "modified".to_string(),
-                        cleanSize: c.size,
-                        moddedSize: m.size,
+                        cleanSize: c.sizeBytes,
+                        moddedSize: m.sizeBytes,
                         cleanSha256: c.sha256.clone(),
                         moddedSha256: m.sha256.clone(),
                         extension: meta.extension,
@@ -1328,7 +1365,7 @@ fn diff_maps(
                 }
             }
             (Some(c), None) => {
-                let mut meta = build_rich_metadata(&c.path, "removed", c.size, 0);
+                let mut meta = build_rich_metadata(&c.path, "removed", c.sizeBytes, 0);
                 if let Some(rules) = component_rules {
                     let matches = match_component_rules(&c.path, rules);
                     apply_component_rule_metadata(&mut meta, &matches);
@@ -1336,7 +1373,7 @@ fn diff_maps(
                 changes.push(Change {
                     path: c.path.clone(),
                     status: "removed".to_string(),
-                    cleanSize: c.size,
+                    cleanSize: c.sizeBytes,
                     moddedSize: 0,
                     cleanSha256: c.sha256.clone(),
                     moddedSha256: String::new(),
@@ -1356,7 +1393,7 @@ fn diff_maps(
                 });
             }
             (None, Some(m)) => {
-                let mut meta = build_rich_metadata(&m.path, "added", 0, m.size);
+                let mut meta = build_rich_metadata(&m.path, "added", 0, m.sizeBytes);
                 if let Some(rules) = component_rules {
                     let matches = match_component_rules(&m.path, rules);
                     apply_component_rule_metadata(&mut meta, &matches);
@@ -1365,7 +1402,7 @@ fn diff_maps(
                     path: m.path.clone(),
                     status: "added".to_string(),
                     cleanSize: 0,
-                    moddedSize: m.size,
+                    moddedSize: m.sizeBytes,
                     cleanSha256: String::new(),
                     moddedSha256: m.sha256.clone(),
                     extension: meta.extension,
@@ -1707,55 +1744,76 @@ fn classify(changes: &[Change], component_rules: Option<&ComponentRules>) -> Vec
 }
 
 fn write_scan_manifest(
-    archive: &Path,
+    archive_identity: &ArchiveIdentity,
     keys_path: &Path,
     out: &Path,
-    depth: usize,
     tool: &ToolMetadata,
     timing: &Timing,
     scan: &ScanMetadata,
     rules: &RulesMetadata,
     entries: &BTreeMap<String, EntryInfo>,
     warnings: &[Warning],
+    counters: &ScanCounters,
 ) -> Result<()> {
+    #[derive(Serialize)]
+    struct ScanBlock<'a> {
+        mode: &'a str,
+        depth: usize,
+        archivePath: &'a str,
+        archiveFileName: &'a str,
+        archiveSizeBytes: u64,
+        archiveSha256: &'a str,
+        keysPathProvided: bool,
+    }
+
+    #[derive(Serialize)]
+    struct ManifestStats {
+        totalEntries: usize,
+        scannedEntries: usize,
+        targetEntries: usize,
+        nestedArchivesOpened: usize,
+        warnings: usize,
+    }
+
     #[derive(Serialize)]
     struct Manifest<'a> {
         schemaVersion: &'a str,
+        ok: bool,
         tool: &'a ToolMetadata,
         timing: &'a Timing,
-        scan: &'a ScanMetadata,
+        scan: ScanBlock<'a>,
         rules: &'a RulesMetadata,
-        ok: bool,
-        backend: &'a str,
-        archive: String,
-        keysPath: String,
-        depth: usize,
         stats: ManifestStats,
         warnings: &'a [Warning],
         files: Vec<&'a EntryInfo>,
     }
 
-    #[derive(Serialize)]
-    struct ManifestStats {
-        files: usize,
-    }
+    let all_files: Vec<&EntryInfo> = entries.values().collect();
 
     let manifest = Manifest {
         schemaVersion: SCHEMA_VERSION,
+        ok: true,
         tool,
         timing,
-        scan,
+        scan: ScanBlock {
+            mode: &scan.mode,
+            depth: scan.depth,
+            archivePath: &archive_identity.archivePath,
+            archiveFileName: &archive_identity.archiveFileName,
+            archiveSizeBytes: archive_identity.archiveSizeBytes,
+            archiveSha256: &archive_identity.archiveSha256,
+            keysPathProvided: !keys_path.as_os_str().is_empty(),
+        },
         rules,
-        ok: true,
-        backend: "rpf_backend_rs/rpf-archive",
-        archive: archive.display().to_string(),
-        keysPath: keys_path.display().to_string(),
-        depth,
         stats: ManifestStats {
-            files: entries.len(),
+            totalEntries: entries.len(),
+            scannedEntries: entries.len(),
+            targetEntries: counters.target_entries,
+            nestedArchivesOpened: counters.nested_archives_opened,
+            warnings: warnings.len(),
         },
         warnings,
-        files: entries.values().collect(),
+        files: all_files,
     };
 
     let json = serde_json::to_string_pretty(&manifest)?;
@@ -1792,6 +1850,63 @@ mod tests {
             ScanMode::Deep
         );
     }
+
+    #[test]
+    fn archive_identity_serializes_expected_fields() {
+        let identity = ArchiveIdentity {
+            archivePath: "examples/fixtures/clean_update.rpf".to_string(),
+            archiveFileName: "clean_update.rpf".to_string(),
+            archiveSizeBytes: 12345,
+            archiveSha256: "abc123".to_string(),
+        };
+        let json = serde_json::to_string(&identity).unwrap();
+        assert!(json.contains("\"archivePath\""));
+        assert!(json.contains("\"archiveFileName\""));
+        assert!(json.contains("\"archiveSizeBytes\""));
+        assert!(json.contains("\"archiveSha256\""));
+        assert!(!json.contains("password"));
+        assert!(!json.contains("key"));
+    }
+
+    #[test]
+    fn rules_metadata_has_new_fields() {
+        let meta = RulesMetadata {
+            componentRulesSource: "fallback".to_string(),
+            componentRulesPath: None,
+            componentRulesVersion: "1.0".to_string(),
+            targetRulesSource: "fallback".to_string(),
+            targetRulesPath: None,
+            targetRulesVersion: "1.0".to_string(),
+            rulesDir: Some("rules/".to_string()),
+            usedFallbackRules: true,
+        };
+        let json = serde_json::to_string(&meta).unwrap();
+        assert!(json.contains("\"rulesDir\""));
+        assert!(json.contains("\"usedFallbackRules\""));
+        assert!(json.contains("true"));
+    }
+
+    #[test]
+    fn entry_info_uses_size_bytes_field() {
+        let entry = EntryInfo {
+            path: "common/data/weather.xml".to_string(),
+            name: "weather.xml".to_string(),
+            extension: "xml".to_string(),
+            sizeBytes: 4096,
+            sha256: "deadbeef".to_string(),
+            source: "update.rpf".to_string(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"sizeBytes\""));
+        assert!(json.contains("\"name\""));
+        assert!(json.contains("\"extension\""));
+        assert!(!json.contains("\"size\""));
+    }
+
+    #[test]
+    fn schema_version_is_2_0() {
+        assert_eq!(SCHEMA_VERSION, "2.0");
+    }
 }
 
 fn main() -> Result<()> {
@@ -1812,6 +1927,8 @@ fn main() -> Result<()> {
             let out = args.out.clone().context("scan requires --out")?;
             ensure_parent_dir(&out)?;
 
+            let archive_identity = build_archive_identity(&archive)?;
+
             let keys = GtaKeys::load_from_path(&keys_path).with_context(|| {
                 format!("failed to load keys directory from {}", keys_path.display())
             })?;
@@ -1821,7 +1938,7 @@ fn main() -> Result<()> {
                 push_deprecated_mode_warning(&mut warnings);
             }
             let rules = load_rules(&args, &mut warnings)?;
-            let entries = scan_archive(
+            let (entries, counters) = scan_archive(
                 &archive,
                 &keys,
                 args.depth,
@@ -1837,16 +1954,16 @@ fn main() -> Result<()> {
             };
 
             write_scan_manifest(
-                &archive,
+                &archive_identity,
                 &keys_path,
                 &out,
-                args.depth,
                 &tool,
                 &timing,
                 &scan,
                 &rules.metadata,
                 &entries,
                 &warnings,
+                &counters,
             )?;
 
             println!("scan complete");
@@ -1866,6 +1983,9 @@ fn main() -> Result<()> {
             let out = args.out.clone().context("compare requires --out")?;
             ensure_parent_dir(&out)?;
 
+            let clean_identity = build_archive_identity(&clean)?;
+            let modded_identity = build_archive_identity(&modded)?;
+
             let keys = GtaKeys::load_from_path(&keys_path).with_context(|| {
                 format!("failed to load keys directory from {}", keys_path.display())
             })?;
@@ -1876,7 +1996,7 @@ fn main() -> Result<()> {
             }
             let rules = load_rules(&args, &mut warnings)?;
 
-            let clean_entries =
+            let (clean_entries, _clean_counters) =
                 scan_archive(
                     &clean,
                     &keys,
@@ -1887,7 +2007,7 @@ fn main() -> Result<()> {
                 )
                     .with_context(|| format!("failed to scan clean archive {}", clean.display()))?;
 
-            let modded_entries =
+            let (modded_entries, _modded_counters) =
                 scan_archive(
                     &modded,
                     &keys,
@@ -1903,45 +2023,92 @@ fn main() -> Result<()> {
             let changes =
                 diff_maps(&clean_entries, &modded_entries, rules.component_rules.as_ref());
             let components = classify(&changes, rules.component_rules.as_ref());
+
             let timing = Timing {
                 startedAt: format_timestamp(started_at)?,
                 finishedAt: format_timestamp(OffsetDateTime::now_utc())?,
                 durationMs: start_instant.elapsed().as_millis() as u64,
             };
 
-            let report = Report {
-                schemaVersion: SCHEMA_VERSION.to_string(),
-                tool,
-                timing,
-                scan,
-                rules: rules.metadata,
+            let added: usize = changes.iter().filter(|c| c.status == "added").count();
+            let removed: usize = changes.iter().filter(|c| c.status == "removed").count();
+            let modified: usize = changes.iter().filter(|c| c.status == "modified").count();
+            let unchanged = clean_entries.len().saturating_sub(removed + modified);
+
+            #[derive(Serialize)]
+            struct CompareScanBlock<'a> {
+                mode: &'a str,
+                depth: usize,
+                clean: &'a ArchiveIdentity,
+                modded: &'a ArchiveIdentity,
+                keysPathProvided: bool,
+            }
+
+            #[derive(Serialize)]
+            struct CompareStats {
+                cleanEntries: usize,
+                moddedEntries: usize,
+                addedEntries: usize,
+                removedEntries: usize,
+                modifiedEntries: usize,
+                unchangedEntries: usize,
+                componentReports: usize,
+                warnings: usize,
+            }
+
+            #[derive(Serialize)]
+            struct CompareReport<'a> {
+                schemaVersion: &'a str,
+                ok: bool,
+                tool: &'a ToolMetadata,
+                timing: &'a Timing,
+                scan: CompareScanBlock<'a>,
+                rules: &'a RulesMetadata,
+                stats: CompareStats,
+                warnings: &'a [Warning],
+                components: &'a [ComponentReport],
+                allChanges: &'a [Change],
+            }
+
+            let report = CompareReport {
+                schemaVersion: SCHEMA_VERSION,
                 ok: true,
-                backend: "rpf_backend_rs/rpf-archive".to_string(),
-                cleanInput: clean.display().to_string(),
-                moddedInput: modded.display().to_string(),
-                keysPath: keys_path.display().to_string(),
-                depth: args.depth,
-                stats: Stats {
+                tool: &tool,
+                timing: &timing,
+                scan: CompareScanBlock {
+                    mode: &scan.mode,
+                    depth: scan.depth,
+                    clean: &clean_identity,
+                    modded: &modded_identity,
+                    keysPathProvided: !keys_path.as_os_str().is_empty(),
+                },
+                rules: &rules.metadata,
+                stats: CompareStats {
                     cleanEntries: clean_entries.len(),
                     moddedEntries: modded_entries.len(),
-                    changedEntries: changes.len(),
+                    addedEntries: added,
+                    removedEntries: removed,
+                    modifiedEntries: modified,
+                    unchangedEntries: unchanged,
+                    componentReports: components.len(),
+                    warnings: warnings.len(),
                 },
-                warnings,
-                components,
-                allChanges: changes,
+                warnings: &warnings,
+                components: &components,
+                allChanges: &changes,
             };
 
             let json = serde_json::to_string_pretty(&report)?;
             fs::write(&out, json)?;
 
             println!("compare complete");
-            println!("clean entries: {}", report.stats.cleanEntries);
-            println!("modded entries: {}", report.stats.moddedEntries);
-            println!("changed entries: {}", report.stats.changedEntries);
+            println!("clean entries: {}", clean_entries.len());
+            println!("modded entries: {}", modded_entries.len());
+            println!("added: {}  removed: {}  modified: {}", added, removed, modified);
             println!("out: {}", out.display());
 
             println!("\nComponents:");
-            for c in &report.components {
+            for c in &components {
                 if c.status == "changed" {
                     println!(
                         "  {}: CHANGED [{}] ({} match(es))",

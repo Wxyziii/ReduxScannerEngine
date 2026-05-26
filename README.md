@@ -131,26 +131,26 @@ Examples:
 
 ```powershell
 .\dist\redux_rpf_scanner.exe scan-rpf `
-  --archive "D:\AI_Redux_Lab\baselines\update.rpf" `
-  --keys "C:\Users\Marcel\Downloads\rpf_keys" `
-  --out "D:\AI_Redux_Lab\scans\clean_deep_scan\deep_manifest.json" `
+  --archive "path\to\clean_update.rpf" `
+  --keys "path\to\rpf_keys" `
+  --out "output\scans\deep_manifest.json" `
   --mode deep `
   --depth 4
 ```
 
 ```powershell
 .\dist\redux_rpf_scanner.exe compare-rpf `
-  --clean "D:\AI_Redux_Lab\baselines\update.rpf" `
-  --modded "D:\AI_Redux_Lab\redux_sources\redux_001\update.rpf" `
-  --keys "C:\Users\Marcel\Downloads\rpf_keys" `
-  --out "D:\AI_Redux_Lab\diffs\clean_vs_redux_001\component_diff.json" `
+  --clean "path\to\clean_update.rpf" `
+  --modded "path\to\modded_update.rpf" `
+  --keys "path\to\rpf_keys" `
+  --out "output\diffs\component_diff.json" `
   --mode targeted `
   --depth 2
 ```
 
 ```powershell
 .\dist\redux_rpf_scanner.exe validate-tools `
-  --keys "C:\Users\Marcel\Downloads\rpf_keys"
+  --keys "path\to\rpf_keys"
 ```
 
 ## Scan modes
@@ -173,99 +173,177 @@ Examples:
 
 ```powershell
 .\dist\redux_rpf_scanner.exe scan-rpf `
-  --archive "D:\AI_Redux_Lab\baselines\update.rpf" `
-  --keys "C:\Users\Marcel\Downloads\rpf_keys" `
-  --out "D:\AI_Redux_Lab\scans\targeted_manifest.json" `
+  --archive "path\to\clean_update.rpf" `
+  --keys "path\to\rpf_keys" `
+  --out "output\scans\targeted_manifest.json" `
   --mode targeted `
   --depth 4
 ```
 
 ```powershell
 .\dist\redux_rpf_scanner.exe scan-rpf `
-  --archive "D:\AI_Redux_Lab\baselines\update.rpf" `
-  --keys "C:\Users\Marcel\Downloads\rpf_keys" `
-  --out "D:\AI_Redux_Lab\scans\deep_manifest.json" `
+  --archive "path\to\clean_update.rpf" `
+  --keys "path\to\rpf_keys" `
+  --out "output\scans\deep_manifest.json" `
   --mode deep `
   --depth 4
 ```
 
 ```powershell
 .\dist\redux_rpf_scanner.exe compare-rpf `
-  --clean "D:\AI_Redux_Lab\baselines\update.rpf" `
-  --modded "D:\AI_Redux_Lab\redux_sources\redux_001\update.rpf" `
-  --keys "C:\Users\Marcel\Downloads\rpf_keys" `
-  --out "D:\AI_Redux_Lab\diffs\clean_vs_redux_001\component_diff.json" `
+  --clean "path\to\clean_update.rpf" `
+  --modded "path\to\modded_update.rpf" `
+  --keys "path\to\rpf_keys" `
+  --out "output\diffs\component_diff.json" `
   --mode targeted `
   --depth 4
 ```
 
 ## Output metadata (schema v2)
 
-Scan and compare JSON reports include schema metadata, tool metadata, timing, and structured warnings:
+All scan and compare JSON reports use `schemaVersion: "2.0"`.
+
+### Scan output shape
 
 ```json
 {
   "schemaVersion": "2.0",
+  "ok": true,
   "tool": {
-    "name": "redux_rpf_scanner",
+    "name": "rpf_backend_rs",
     "version": "0.2.0",
-    "backend": "rpf_backend_rs",
     "backendVersion": "0.2.0",
     "platform": "windows"
   },
   "timing": {
-    "startedAt": "2026-05-25T19:42:01Z",
-    "finishedAt": "2026-05-25T19:42:04Z",
-    "durationMs": 2987
+    "startedAt": "2025-01-01T00:00:00Z",
+    "finishedAt": "2025-01-01T00:00:01Z",
+    "durationMs": 1234
   },
-  "warnings": [
+  "scan": {
+    "mode": "targeted",
+    "depth": 3,
+    "archivePath": "path/to/update.rpf",
+    "archiveFileName": "update.rpf",
+    "archiveSizeBytes": 1048576,
+    "archiveSha256": "...",
+    "keysPathProvided": true
+  },
+  "rules": {
+    "componentRulesSource": "fallback",
+    "componentRulesPath": null,
+    "componentRulesVersion": "built-in",
+    "targetRulesSource": "fallback",
+    "targetRulesPath": null,
+    "targetRulesVersion": "built-in",
+    "rulesDir": null,
+    "usedFallbackRules": false
+  },
+  "stats": {
+    "totalEntries": 284,
+    "scannedEntries": 284,
+    "targetEntries": 284,
+    "nestedArchivesOpened": 2,
+    "warnings": 0
+  },
+  "warnings": [],
+  "files": [
     {
-      "code": "NESTED_RPF_OPEN_FAILED",
-      "severity": "warning",
-      "path": "x64/patch/data/effects/ptfx.rpf",
-      "message": "failed to open nested RPF: ..."
+      "path": "common/data/bloodfx.dat",
+      "name": "bloodfx.dat",
+      "extension": "dat",
+      "sizeBytes": 47001,
+      "sha256": "...",
+      "source": "path/to/update.rpf"
     }
   ]
 }
 ```
 
-Scan and compare outputs also include scan settings:
+### Compare output shape
 
 ```json
 {
+  "schemaVersion": "2.0",
+  "ok": true,
+  "tool": { "..." },
+  "timing": { "..." },
   "scan": {
     "mode": "targeted",
-    "depth": 4
-  }
+    "depth": 3,
+    "clean": {
+      "archivePath": "path/to/clean_update.rpf",
+      "archiveFileName": "clean_update.rpf",
+      "archiveSizeBytes": 1048576,
+      "archiveSha256": "..."
+    },
+    "modded": {
+      "archivePath": "path/to/modded_update.rpf",
+      "archiveFileName": "modded_update.rpf",
+      "archiveSizeBytes": 1052672,
+      "archiveSha256": "..."
+    },
+    "keysPathProvided": true
+  },
+  "rules": { "..." },
+  "stats": {
+    "cleanEntries": 284,
+    "moddedEntries": 284,
+    "addedEntries": 0,
+    "removedEntries": 0,
+    "modifiedEntries": 12,
+    "unchangedEntries": 272,
+    "componentReports": 3,
+    "warnings": 0
+  },
+  "warnings": [],
+  "components": [ "..." ],
+  "allChanges": [ "..." ]
 }
 ```
 
-### Compare output rich fields (per changed file)
-
-Each entry in `allChanges` and each component file hit includes rich metadata:
+### Per-file change entry (allChanges)
 
 ```json
 {
-  "path": "x64/patch/data/effects/ptfx.rpf",
+  "path": "x64/patch/data/effects/ptfx.rpf/core.ypt",
   "status": "modified",
-  "cleanSize": 120001,
-  "moddedSize": 118420,
-  "sizeDelta": -1581,
-  "sizeDeltaPercent": -1.316,
-  "extension": "rpf",
-  "basename": "ptfx.rpf",
-  "parentPath": "x64/patch/data/effects",
-  "category": "particle_container",
-  "components": ["tracer", "hit_effect"],
-  "editorNeeded": ["ypt_particle_editor"],
-  "risk": "medium_high",
-  "likelyPattern": "particle_container_reduction",
+  "cleanSize": 3324239,
+  "moddedSize": 3330000,
+  "cleanSha256": "...",
+  "moddedSha256": "...",
+  "extension": "ypt",
+  "basename": "core.ypt",
+  "parentPath": "x64/patch/data/effects/ptfx.rpf",
+  "sizeDelta": 5761,
+  "sizeDeltaPercent": 0.17,
+  "category": "particle",
+  "components": ["tracer"],
+  "editorNeeded": ["OpenIV"],
+  "risk": "medium",
+  "likelyPattern": "ptfx_particle_container",
   "confidence": "medium",
-  "warning": "Exact particle-level changes require a YPT analyzer."
+  "warning": null,
+  "reason": "size and sha256 differ"
 }
 ```
 
 `sizeDeltaPercent` is `null` for added files (no clean baseline).
+
+### Warnings shape
+
+```json
+{
+  "code": "NESTED_RPF_OPEN_FAILED",
+  "severity": "warning",
+  "path": "x64/patch/data/effects/ptfx.rpf",
+  "message": "failed to open nested RPF: ..."
+}
+```
+
+### Sample outputs
+
+Files in `examples/sample_outputs/` are **sanitized schema examples** — they use placeholder archive paths and do not contain real game data. No RPF files, keys, or raw game assets are committed to this repo.
 
 ## Recommended next development step
 
