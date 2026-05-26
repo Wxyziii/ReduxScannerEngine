@@ -1,0 +1,40 @@
+{
+  "version": "0.1",
+  "targetExtensions": [
+    ".xml",
+    ".ypt",
+    ".ytd",
+    ".gfx",
+    ".dat",
+    ".meta",
+    ".ymt",
+    ".rpf"
+  ],
+  "targetPathContains": [
+    "minimap",
+    "scaleform_minimap",
+    "ptfx",
+    "core.ypt",
+    "tracer",
+    "blood",
+    "spray",
+    "hit_effect",
+    "timecycle"
+  ],
+  "targetBasenames": [
+    "scaleform_minimap.rpf",
+    "ptfx.rpf",
+    "core.ypt",
+    "bloodfx.dat",
+    "timecycle_mods_1.xml",
+    "timecycle_mods_2.xml",
+    "timecycle_mods_3.xml",
+    "timecycle_mods_4.xml",
+    "w_clear.xml",
+    "w_clouds.xml",
+    "w_extrasunny.xml",
+    "w_foggy.xml",
+    "w_halloween.xml",
+    "w_neutral.xml"
+  ]
+}

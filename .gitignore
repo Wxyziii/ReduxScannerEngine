@@ -1,0 +1,40 @@
+# Rust
+target/
+**/target/
+Cargo.lock.bak
+
+# CMake/build
+build/
+dist/
+out/
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Node/editor noise
+node_modules/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Project-sensitive/runtime files
+keys/
+rpf_keys/
+*.rpf
+*.zip
+*.rar
+*.7z
+*.log
+
+# Generated reports can be large; keep examples intentionally under examples/
+reports/
+scans/
+diffs/
+cache/
+.cache/

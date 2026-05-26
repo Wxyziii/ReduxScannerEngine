@@ -1,0 +1,85 @@
+{
+  "version": "0.1",
+  "components": [
+    {
+      "id": "tracer",
+      "name": "Tracer",
+      "editorNeeded": ["ypt_particle_editor"],
+      "risk": "medium_high",
+      "rules": [
+        {
+          "type": "path_contains",
+          "value": "ptfx_bullet_tracer",
+          "confidence": "high",
+          "reason": "Path directly references bullet tracer particle effect."
+        },
+        {
+          "type": "basename_equals",
+          "value": "core.ypt",
+          "confidence": "medium",
+          "reason": "core.ypt is a common particle container used by tracer edits."
+        }
+      ]
+    },
+    {
+      "id": "hit_effect",
+      "name": "Hit Effect / Blood Spray",
+      "editorNeeded": ["ypt_particle_editor", "dat_parser"],
+      "risk": "medium_high",
+      "rules": [
+        {
+          "type": "path_contains",
+          "value": "ptfx_blood_spray",
+          "confidence": "high",
+          "reason": "Path directly references blood spray particle effect."
+        },
+        {
+          "type": "basename_equals",
+          "value": "bloodfx.dat",
+          "confidence": "high",
+          "reason": "bloodfx.dat is known hit/blood effect config."
+        }
+      ]
+    },
+    {
+      "id": "sky_timecycle",
+      "name": "Sky / Timecycle",
+      "editorNeeded": ["xml_editor"],
+      "risk": "low_medium",
+      "rules": [
+        {
+          "type": "basename_starts_with",
+          "value": "w_",
+          "confidence": "medium",
+          "reason": "Weather XML file."
+        },
+        {
+          "type": "basename_starts_with",
+          "value": "timecycle_mods_",
+          "confidence": "high",
+          "reason": "Timecycle modifier XML."
+        }
+      ]
+    },
+    {
+      "id": "minimap_hud",
+      "name": "Minimap / HUD",
+      "editorNeeded": ["gfx_swf_converter", "ytd_texture_editor"],
+      "risk": "medium",
+      "rules": [
+        {
+          "type": "path_contains",
+          "value": "minimap",
+          "confidence": "high",
+          "reason": "Path references minimap/HUD assets."
+        },
+        {
+          "type": "basename_equals",
+          "value": "scaleform_minimap.rpf",
+          "confidence": "high",
+          "reason": "Known minimap scaleform archive."
+        }
+      ]
+    }
+  ]
+}

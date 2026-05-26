@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-05-25T12:14:41",
+  "command": [
+    "C:\\Users\\Marcel\\Downloads\\redux_rpf_rs_scanner_dist\\redux_rpf_scanner.exe",
+    "scan-rpf",
+    "--archive",
+    "D:\\AI_Redux_Lab\\redux_sources\\redux_001\\update.rpf",
+    "--keys",
+    "C:\\Users\\Marcel\\Downloads\\rpf_keys",
+    "--out",
+    "D:\\AI_Redux_Lab\\scans\\redux_001_deep_scan\\deep_manifest.json",
+    "--depth",
+    "4"
+  ]
+}

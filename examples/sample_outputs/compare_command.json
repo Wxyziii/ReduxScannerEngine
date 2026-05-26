@@ -1,0 +1,17 @@
+{
+  "createdAt": "2026-05-25T12:15:42",
+  "command": [
+    "C:\\Users\\Marcel\\Downloads\\redux_rpf_rs_scanner_dist\\redux_rpf_scanner.exe",
+    "compare-rpf",
+    "--clean",
+    "D:\\AI_Redux_Lab\\baselines\\clean_update.rpf",
+    "--modded",
+    "D:\\AI_Redux_Lab\\redux_sources\\redux_001\\update.rpf",
+    "--keys",
+    "C:\\Users\\Marcel\\Downloads\\rpf_keys",
+    "--out",
+    "D:\\AI_Redux_Lab\\diffs\\clean_vs_redux_001\\component_diff.json",
+    "--depth",
+    "2"
+  ]
+}
