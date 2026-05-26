@@ -144,6 +144,7 @@ struct Args {
     int depth = 2;
     std::string mode;
     bool mode_set = false;
+    bool analyze_text = false;
     DeprecatedModeFlag deprecated_mode = DeprecatedModeFlag::None;
     fs::path component_rules;
     fs::path target_rules;
@@ -167,7 +168,7 @@ Commands:
                   [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
   diff-against-baseline --modded <modded.update.rpf> --baseline <baseline_output_dir>
                   --keys <keys_dir> --out <diff_output_dir>
-                  [--backend <rpf_backend_rs.exe>] [--depth 2]
+                  [--backend <rpf_backend_rs.exe>] [--depth 2] [--clean <clean.rpf>] [--analyze-text]
                   [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
   classify-rpf    --archive <unknown.rpf> --baseline <baseline_output_dir>
                   --keys <keys_dir> --out <classification.json>
@@ -269,6 +270,7 @@ static Args parse_args(int argc, char** argv) {
         else if (a == "--target-rules") args.target_rules = need(a);
         else if (a == "--rules-dir") args.rules_dir = need(a);
         else if (a == "--baseline") args.baseline = need(a);
+        else if (a == "--analyze-text") args.analyze_text = true;
         else if (a == "--help" || a == "-h") {
             usage();
             std::exit(0);
@@ -368,6 +370,13 @@ static std::vector<std::string> build_backend_args(const Args& args) {
         v.push_back(path_to_utf8(args.modded));
         v.push_back("--baseline");
         v.push_back(path_to_utf8(args.baseline));
+        if (!args.clean.empty()) {
+            v.push_back("--clean");
+            v.push_back(path_to_utf8(args.clean));
+        }
+        if (args.analyze_text) {
+            v.push_back("--analyze-text");
+        }
         v.push_back("--keys");
         v.push_back(path_to_utf8(args.keys));
         v.push_back("--out");

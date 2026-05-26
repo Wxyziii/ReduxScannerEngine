@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "analyzer_warnings",
+  "total": 2,
+  "warnings": [
+    {
+      "path": "cache_data_001.dat",
+      "analyzer": "dat_config_analyzer",
+      "reason": "clean bytes were not valid UTF-8: invalid utf-8 sequence at index 142"
+    },
+    {
+      "path": "binary_config.ymt",
+      "analyzer": "xml_analyzer",
+      "reason": "bytes do not look like text (contains null bytes): skipped content analysis"
+    }
+  ]
+}

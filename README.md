@@ -604,3 +604,67 @@ Do not commit `unknown_changes.json`, `candidate_patterns.json`, `llm_review_que
 
 See `examples/sample_outputs/unknown_patterns_example/` for sanitized examples with fake paths and hashes.
 
+
+
+## R0.7: Text / Config Inside-File Analyzers
+
+After `diff-against-baseline` identifies changed files, add `--analyze-text` to compare
+the actual byte contents of readable text, XML, DAT, and META files between the clean
+and modded archives.
+
+### Usage
+
+```
+redux_rpf_scanner.exe diff-against-baseline ^
+  --modded <modded_update.rpf> ^
+  --baseline <baseline_output_dir> ^
+  --keys <keys_dir> ^
+  --out <diff_output_dir> ^
+  --clean <clean_update.rpf> ^
+  --analyze-text
+```
+
+`--analyze-text` is **optional**. Without it, only the standard R0.4/R0.6 diff artifacts
+are produced. Adding it triggers inside-file analysis and writes 7 additional artifacts.
+
+`--clean` must be provided (or stored in `baseline_metadata.json` from a fresh baseline-scan)
+so the scanner can re-open the clean archive to extract original file bytes.
+
+### Artifacts produced
+
+| File | Description |
+|------|-------------|
+| `text_analysis_summary.json` | Counts of analyzed / skipped / failed files, top changed files, top extensions |
+| `xml_diffs.json` | Line-based diff for `.xml` files with numeric and color-like change detection |
+| `dat_diffs.json` | Line and key-value diff for `.dat` config files with numeric deltas |
+| `meta_diffs.json` | Diff for `.meta` files (treated as XML-like text) |
+| `generic_text_diffs.json` | Line diff for `.txt`, `.ini`, `.cfg`, `.json`, and other readable text |
+| `analyzer_warnings.json` | Files skipped due to binary content, extraction failures, or UTF-8 errors |
+| `ai_readable_change_notes.jsonl` | Metadata-only JSONL — one record per analyzed file for future LLM review |
+
+### What the analyzers do
+
+- **XML analyzer** — splits lines, detects numeric and color-like value changes, reports
+  sample line pairs. Does not use a full DOM parser; uses line-level heuristics.
+- **DAT analyzer** — detects `key=value`, `key: value`, and `key value` patterns; diffs
+  key sets; reports numeric deltas for changed values.
+- **META analyzer** — same approach as XML analyzer (`.meta` files follow XML-like structure).
+- **Generic text analyzer** — line-based diff for all other readable text formats.
+- **Binary skipped** — `.ymt`, `.ymap`, `.ytyp` files that fail UTF-8 detection are
+  logged in `analyzer_warnings.json` as `skippedNotTextBytes`. They remain in
+  `unknown_binary_candidates.json` for future binary analyzers.
+
+### No LLM calls
+
+`ai_readable_change_notes.jsonl` contains **metadata and change summaries only**.
+No raw file contents are included. No LLM API is called. The records are queued
+for optional human or LLM review at a later stage.
+
+### Do not commit real analyzer output
+
+Do not commit `xml_diffs.json`, `dat_diffs.json`, `meta_diffs.json`, or any other
+text analyzer output generated from real GTA V game files. They are derived from
+proprietary content. Store them locally only.
+
+See `examples/sample_outputs/text_analyzers_example/` for sanitized examples with
+fake paths and fake values.

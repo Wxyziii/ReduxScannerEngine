@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "xml_diffs",
+  "tool": {
+    "name": "rpf_backend_rs",
+    "version": "0.2.0"
+  },
+  "timing": {
+    "startedAt": "2025-01-01T00:00:00Z",
+    "elapsedSeconds": 1.23
+  },
+  "stats": {
+    "total": 2
+  },
+  "entries": [
+    {
+      "path": "timecycle_mods_1.xml",
+      "status": "modified",
+      "analyzer": "xml_analyzer",
+      "parseStrategy": "line_diff_with_xml_hints",
+      "cleanLines": 1500,
+      "moddedLines": 1498,
+      "addedLines": 12,
+      "removedLines": 14,
+      "numericChanges": 9,
+      "colorLikeChanges": 3,
+      "sampleChanges": [
+        {
+          "lineIndex": 42,
+          "kind": "changed",
+          "oldLine": "  <ambient r=\"200\" g=\"180\" b=\"160\" />",
+          "newLine": "  <ambient r=\"180\" g=\"155\" b=\"130\" />",
+          "changeHint": "color_like"
+        },
+        {
+          "lineIndex": 87,
+          "kind": "changed",
+          "oldLine": "  <fogStart value=\"0.800000\" />",
+          "newLine": "  <fogStart value=\"0.400000\" />",
+          "changeHint": "numeric_change"
+        },
+        {
+          "lineIndex": 112,
+          "kind": "changed",
+          "oldLine": "  <sunIntensity value=\"1.200000\" />",
+          "newLine": "  <sunIntensity value=\"0.900000\" />",
+          "changeHint": "numeric_change"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "path": "visualsettings_config.xml",
+      "status": "modified",
+      "analyzer": "xml_analyzer",
+      "parseStrategy": "line_diff_with_xml_hints",
+      "cleanLines": 320,
+      "moddedLines": 322,
+      "addedLines": 4,
+      "removedLines": 2,
+      "numericChanges": 5,
+      "colorLikeChanges": 1,
+      "sampleChanges": [
+        {
+          "lineIndex": 55,
+          "kind": "changed",
+          "oldLine": "  <shadowDistance value=\"80.000000\" />",
+          "newLine": "  <shadowDistance value=\"120.000000\" />",
+          "changeHint": "numeric_change"
+        }
+      ],
+      "warnings": []
+    }
+  ]
+}

@@ -305,6 +305,7 @@ struct Args {
     mode: ScanMode,
     mode_was_explicit: bool,
     deprecated_flag_used: bool,
+    analyze_text: bool,
     component_rules: Option<PathBuf>,
     target_rules: Option<PathBuf>,
     rules_dir: Option<PathBuf>,
@@ -329,7 +330,7 @@ Commands:
                 [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
   diff-against-baseline --modded <modded.update.rpf> --baseline <baseline_output_dir>
                 --keys <keys_dir> --out <diff_output_dir>
-                [--depth 2]
+                [--depth 2] [--clean <clean.rpf>] [--analyze-text]
                 [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
   classify-rpf  --archive <unknown.rpf> --baseline <baseline_output_dir>
                 --keys <keys_dir> --out <classification.json>
@@ -383,6 +384,7 @@ fn parse_args() -> Result<Args> {
         mode: ScanMode::Targeted,
         mode_was_explicit: false,
         deprecated_flag_used: false,
+        analyze_text: false,
         component_rules: None,
         target_rules: None,
         rules_dir: None,
@@ -451,6 +453,7 @@ fn parse_args() -> Result<Args> {
                 args.baseline =
                     Some(PathBuf::from(it.next().context("missing value for --baseline")?))
             }
+            "--analyze-text" => args.analyze_text = true,
             "--all" => {
                 args.deprecated_flag_used = true;
                 deprecated_mode = Some(ScanMode::Full);
@@ -2218,6 +2221,7 @@ fn write_baseline_fingerprint(
 fn write_baseline_metadata(
     out_dir: &Path,
     archive_identity: &ArchiveIdentity,
+    archive_path_str: &str,
     tool: &ToolMetadata,
     scan: &ScanMetadata,
     rules: &RulesMetadata,
@@ -2240,6 +2244,7 @@ fn write_baseline_metadata(
         baselineArchiveHash: &'a str,
         baselineArchiveSizeBytes: u64,
         baselineArchiveFileName: &'a str,
+        baselineArchivePath: &'a str,
         scannerName: &'a str,
         scannerVersion: &'a str,
         backendVersion: &'a str,
@@ -2258,6 +2263,7 @@ fn write_baseline_metadata(
         baselineArchiveHash: &archive_identity.archiveSha256,
         baselineArchiveSizeBytes: archive_identity.archiveSizeBytes,
         baselineArchiveFileName: &archive_identity.archiveFileName,
+        baselineArchivePath: archive_path_str,
         scannerName: &tool.name,
         scannerVersion: &tool.version,
         backendVersion: &tool.backendVersion,
@@ -2292,6 +2298,8 @@ struct BaselineMetadataFile {
     baselineArchiveHash: String,
     baselineArchiveSizeBytes: u64,
     baselineArchiveFileName: String,
+    #[serde(default)]
+    baselineArchivePath: Option<String>,
 }
 
 fn load_baseline_manifest(baseline_dir: &Path) -> Result<BTreeMap<String, EntryInfo>> {
@@ -3722,6 +3730,1207 @@ fn write_classification_report(
     fs::write(out, json)?;
     Ok(())
 }
+
+// ── Text Analyzers (R0.7) ──────────────────────────────────────────────────
+
+const MAX_TEXT_FILE_BYTES: usize = 25 * 1024 * 1024;
+const MAX_SAMPLE_CHANGES: usize = 10;
+const MAX_KEY_VALUE_SAMPLES: usize = 10;
+
+#[derive(Debug, Clone, Serialize)]
+struct SampleLineChange {
+    lineIndex: usize,
+    kind: String,
+    oldLine: String,
+    newLine: String,
+    changeHint: String,
+}
+
+#[derive(Debug, Clone)]
+struct LineDiffResult {
+    cleanLineCount: usize,
+    moddedLineCount: usize,
+    addedLineCount: usize,
+    removedLineCount: usize,
+    numericChanges: usize,
+    colorLikeChanges: usize,
+    samples: Vec<SampleLineChange>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct XmlDiffEntry {
+    path: String,
+    status: String,
+    analyzer: String,
+    parseStrategy: String,
+    cleanLines: usize,
+    moddedLines: usize,
+    addedLines: usize,
+    removedLines: usize,
+    numericChanges: usize,
+    colorLikeChanges: usize,
+    sampleChanges: Vec<SampleLineChange>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct KeyValueChange {
+    key: String,
+    oldValue: String,
+    newValue: String,
+    valueType: String,
+    numericDelta: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DatDiffEntry {
+    path: String,
+    status: String,
+    analyzer: String,
+    readable: bool,
+    cleanLines: usize,
+    moddedLines: usize,
+    changedKeyCount: usize,
+    addedLines: usize,
+    removedLines: usize,
+    numericChanges: usize,
+    sampleKeyChanges: Vec<KeyValueChange>,
+    sampleChanges: Vec<SampleLineChange>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct MetaDiffEntry {
+    path: String,
+    status: String,
+    analyzer: String,
+    parseStrategy: String,
+    cleanLines: usize,
+    moddedLines: usize,
+    addedLines: usize,
+    removedLines: usize,
+    numericChanges: usize,
+    colorLikeChanges: usize,
+    sampleChanges: Vec<SampleLineChange>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GenericTextDiffEntry {
+    path: String,
+    status: String,
+    analyzer: String,
+    parseStrategy: String,
+    cleanLines: usize,
+    moddedLines: usize,
+    addedLines: usize,
+    removedLines: usize,
+    numericChanges: usize,
+    colorLikeChanges: usize,
+    sampleChanges: Vec<SampleLineChange>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AnalyzerWarning {
+    path: String,
+    analyzer: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+struct TextAnalysisStats {
+    totalCandidates: usize,
+    analyzedFiles: usize,
+    skippedFiles: usize,
+    xmlAnalyzed: usize,
+    datAnalyzed: usize,
+    metaAnalyzed: usize,
+    genericTextAnalyzed: usize,
+    parseFailures: usize,
+    extractionFailures: usize,
+    tooLargeSkipped: usize,
+    skippedNotTextBytes: usize,
+}
+
+#[derive(Debug, Clone)]
+struct TextAnalysisFileSummary {
+    path: String,
+    extension: String,
+    analyzer: String,
+    status: String,
+    sizeDelta: i64,
+    addedLines: usize,
+    removedLines: usize,
+    numericChanges: usize,
+    colorLikeChanges: usize,
+}
+
+#[derive(Debug, Clone)]
+struct TextAnalysisResults {
+    xml_entries: Vec<XmlDiffEntry>,
+    dat_entries: Vec<DatDiffEntry>,
+    meta_entries: Vec<MetaDiffEntry>,
+    generic_entries: Vec<GenericTextDiffEntry>,
+    analyzer_warnings: Vec<AnalyzerWarning>,
+    stats: TextAnalysisStats,
+    file_summaries: Vec<TextAnalysisFileSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AiChangeSummary {
+    addedLines: usize,
+    removedLines: usize,
+    numericChanges: usize,
+    colorLikeChanges: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AiChangeNote {
+    task: String,
+    path: String,
+    extension: String,
+    analyzer: String,
+    changeSummary: AiChangeSummary,
+    question: String,
+}
+
+fn extract_text_bytes_for_paths(
+    archive_path: &Path,
+    keys: &GtaKeys,
+    depth: usize,
+    target_paths: &BTreeSet<String>,
+    max_file_size: usize,
+    warnings: &mut Vec<Warning>,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    let temp = TempDir::new().context("failed to create text extraction temp directory")?;
+    let mut result = BTreeMap::new();
+    extract_text_bytes_inner(
+        archive_path,
+        keys,
+        depth,
+        target_paths,
+        max_file_size,
+        warnings,
+        &mut result,
+        "",
+        temp.path(),
+    )?;
+    Ok(result)
+}
+
+fn extract_text_bytes_inner(
+    archive_path: &Path,
+    keys: &GtaKeys,
+    depth: usize,
+    target_paths: &BTreeSet<String>,
+    max_file_size: usize,
+    warnings: &mut Vec<Warning>,
+    result: &mut BTreeMap<String, Vec<u8>>,
+    prefix: &str,
+    temp_root: &Path,
+) -> Result<()> {
+    let file = RpfFile::open(archive_path, Some(keys)).with_context(|| {
+        format!(
+            "failed to open RPF archive for text extraction: {}",
+            archive_path.display()
+        )
+    })?;
+
+    file.walk(Some(keys), &mut |path, data| {
+        let joined = if prefix.is_empty() {
+            normalize_path(path)
+        } else {
+            normalize_path(&format!("{}/{}", prefix.trim_matches('/'), path))
+        };
+        let key = normalize_path(&joined);
+
+        if target_paths.contains(&key) {
+            if data.len() <= max_file_size {
+                result.insert(key.clone(), data.clone());
+            } else {
+                push_warning(
+                    warnings,
+                    "TEXT_EXTRACT_TOO_LARGE",
+                    &key,
+                    format!(
+                        "skipped text extraction because file exceeds {} bytes",
+                        max_file_size
+                    ),
+                );
+            }
+        }
+
+        if depth > 0 && is_nested_rpf_target(&joined) {
+            let nested_path = temp_root.join(format!("text_nested_{}.rpf", sha256_hex(&data)));
+            if let Err(e) = fs::write(&nested_path, &data) {
+                push_warning(
+                    warnings,
+                    "TEXT_EXTRACT_TEMP_WRITE_FAILED",
+                    &joined,
+                    format!("failed to write nested RPF temp file: {}", e),
+                );
+                return;
+            }
+
+            if let Err(e) = extract_text_bytes_inner(
+                &nested_path,
+                keys,
+                depth - 1,
+                target_paths,
+                max_file_size,
+                warnings,
+                result,
+                &joined,
+                temp_root,
+            ) {
+                push_warning(
+                    warnings,
+                    "TEXT_EXTRACT_NESTED_RPF_OPEN_FAILED",
+                    &joined,
+                    format!("failed to open nested RPF for text extraction: {}", e),
+                );
+            }
+        }
+    });
+
+    Ok(())
+}
+
+fn looks_like_text(bytes: &[u8]) -> bool {
+    let sample = &bytes[..bytes.len().min(512)];
+    if sample.is_empty() {
+        return true;
+    }
+    let null_count = sample.iter().filter(|&&b| b == 0).count();
+    if null_count > 0 {
+        return false;
+    }
+    let non_ascii_count = sample.iter().filter(|&&b| b > 127).count();
+    non_ascii_count * 10 < sample.len() * 3
+}
+
+fn is_definitely_text_ext(ext: &str) -> bool {
+    matches!(ext, "xml" | "dat" | "meta" | "txt" | "ini" | "cfg" | "json")
+}
+
+fn is_maybe_text_ext(ext: &str) -> bool {
+    matches!(ext, "ymt" | "ymap" | "ytyp" | "nametable")
+}
+
+fn parse_number(s: &str) -> Option<f64> {
+    s.trim().parse::<f64>().ok()
+}
+
+fn extract_numbers_from_line(line: &str) -> Vec<f64> {
+    let mut numbers = Vec::new();
+    let mut current = String::new();
+
+    for ch in line.chars() {
+        if ch.is_ascii_digit() || matches!(ch, '.' | '-' | '+') {
+            current.push(ch);
+        } else if !current.is_empty() {
+            if let Some(value) = parse_number(&current) {
+                numbers.push(value);
+            }
+            current.clear();
+        }
+    }
+
+    if !current.is_empty() {
+        if let Some(value) = parse_number(&current) {
+            numbers.push(value);
+        }
+    }
+
+    numbers
+}
+
+fn is_color_like(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    let has_named_rgb = (lower.contains("r=") || lower.contains("r =") || lower.contains("red=") || lower.contains("red ="))
+        && (lower.contains("g=") || lower.contains("g =") || lower.contains("green=") || lower.contains("green ="))
+        && (lower.contains("b=") || lower.contains("b =") || lower.contains("blue=") || lower.contains("blue ="));
+    if has_named_rgb {
+        return true;
+    }
+
+    let numbers = extract_numbers_from_line(line);
+    if numbers.len() < 3 {
+        return false;
+    }
+
+    let sample = &numbers[..3];
+    let zero_to_one = sample.iter().all(|n| *n >= 0.0 && *n <= 1.0);
+    let zero_to_255 = sample.iter().all(|n| *n >= 0.0 && *n <= 255.0);
+    zero_to_one || zero_to_255
+}
+
+fn count_numeric_changes(clean_lines: &[&str], modded_lines: &[&str]) -> usize {
+    clean_lines
+        .iter()
+        .zip(modded_lines.iter())
+        .filter(|(clean_line, modded_line)| clean_line != modded_line)
+        .filter(|(clean_line, modded_line)| {
+            let clean_numbers = extract_numbers_from_line(clean_line);
+            let modded_numbers = extract_numbers_from_line(modded_line);
+            !clean_numbers.is_empty() && !modded_numbers.is_empty() && clean_numbers != modded_numbers
+        })
+        .count()
+}
+
+fn count_color_like_changes(sample_changes: &[SampleLineChange]) -> usize {
+    sample_changes
+        .iter()
+        .filter(|change| change.changeHint == "color_like")
+        .count()
+}
+
+fn sanitize_and_truncate(value: &str, max_len: usize) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .take(max_len)
+        .collect()
+}
+
+fn sanitize_sample_line(line: &str) -> String {
+    sanitize_and_truncate(line, 80)
+}
+
+fn classify_change_hint(old_line: &str, new_line: &str) -> String {
+    if is_color_like(old_line) || is_color_like(new_line) {
+        "color_like".to_string()
+    } else {
+        let clean_numbers = extract_numbers_from_line(old_line);
+        let modded_numbers = extract_numbers_from_line(new_line);
+        if !clean_numbers.is_empty() && !modded_numbers.is_empty() && clean_numbers != modded_numbers {
+            "numeric_change".to_string()
+        } else {
+            "text_change".to_string()
+        }
+    }
+}
+
+fn classify_single_line_hint(line: &str) -> String {
+    if is_color_like(line) {
+        "color_like".to_string()
+    } else if !extract_numbers_from_line(line).is_empty() {
+        "numeric_change".to_string()
+    } else {
+        "text_change".to_string()
+    }
+}
+
+fn build_line_count_map<'a>(lines: &[&'a str]) -> BTreeMap<&'a str, usize> {
+    let mut counts = BTreeMap::new();
+    for line in lines {
+        *counts.entry(*line).or_insert(0usize) += 1;
+    }
+    counts
+}
+
+fn diff_lines(clean_text: &str, modded_text: &str, max_samples: usize) -> LineDiffResult {
+    let clean_lines: Vec<&str> = clean_text.lines().collect();
+    let modded_lines: Vec<&str> = modded_text.lines().collect();
+    let clean_counts = build_line_count_map(&clean_lines);
+    let modded_counts = build_line_count_map(&modded_lines);
+
+    let added_line_count = modded_counts
+        .iter()
+        .map(|(line, count)| count.saturating_sub(*clean_counts.get(line).unwrap_or(&0)))
+        .sum();
+    let removed_line_count = clean_counts
+        .iter()
+        .map(|(line, count)| count.saturating_sub(*modded_counts.get(line).unwrap_or(&0)))
+        .sum();
+
+    let mut all_changes = Vec::new();
+    let min_len = clean_lines.len().min(modded_lines.len());
+
+    for index in 0..min_len {
+        if clean_lines[index] != modded_lines[index] {
+            all_changes.push(SampleLineChange {
+                lineIndex: index + 1,
+                kind: "changed".to_string(),
+                oldLine: sanitize_sample_line(clean_lines[index]),
+                newLine: sanitize_sample_line(modded_lines[index]),
+                changeHint: classify_change_hint(clean_lines[index], modded_lines[index]),
+            });
+        }
+    }
+
+    for (index, line) in clean_lines.iter().enumerate().skip(min_len) {
+        all_changes.push(SampleLineChange {
+            lineIndex: index + 1,
+            kind: "removed".to_string(),
+            oldLine: sanitize_sample_line(line),
+            newLine: String::new(),
+            changeHint: classify_single_line_hint(line),
+        });
+    }
+
+    for (index, line) in modded_lines.iter().enumerate().skip(min_len) {
+        all_changes.push(SampleLineChange {
+            lineIndex: index + 1,
+            kind: "added".to_string(),
+            oldLine: String::new(),
+            newLine: sanitize_sample_line(line),
+            changeHint: classify_single_line_hint(line),
+        });
+    }
+
+    let numeric_changes = count_numeric_changes(&clean_lines, &modded_lines);
+    let color_like_changes = count_color_like_changes(&all_changes);
+    let mut samples = all_changes;
+    samples.truncate(max_samples);
+
+    LineDiffResult {
+        cleanLineCount: clean_lines.len(),
+        moddedLineCount: modded_lines.len(),
+        addedLineCount: added_line_count,
+        removedLineCount: removed_line_count,
+        numericChanges: numeric_changes,
+        colorLikeChanges: color_like_changes,
+        samples,
+    }
+}
+
+fn extract_key_value_pairs(text: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || line.starts_with("//")
+            || line.starts_with(';')
+            || line.starts_with('<')
+        {
+            continue;
+        }
+
+        let parsed = if let Some((key, value)) = line.split_once('=') {
+            Some((key.trim(), value.trim()))
+        } else if let Some((key, value)) = line.split_once(':') {
+            Some((key.trim(), value.trim()))
+        } else {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() == 2 {
+                Some((parts[0].trim(), parts[1].trim()))
+            } else {
+                None
+            }
+        };
+
+        if let Some((key, value)) = parsed {
+            if !key.is_empty()
+                && !value.is_empty()
+                && !key.contains('<')
+                && !key.contains('>')
+                && !value.starts_with('<')
+            {
+                pairs.push((key.to_string(), value.to_string()));
+            }
+        }
+    }
+
+    pairs
+}
+
+fn decode_text_side(bytes: Option<&[u8]>, side: &str, warnings: &mut Vec<String>) -> String {
+    match bytes {
+        Some(bytes) => match std::str::from_utf8(bytes) {
+            Ok(text) => text.to_string(),
+            Err(e) => {
+                warnings.push(format!("{} bytes were not valid UTF-8: {}", side, e));
+                String::from_utf8_lossy(bytes).into_owned()
+            }
+        },
+        None => String::new(),
+    }
+}
+
+fn warning_indicates_parse_failure(warning: &str) -> bool {
+    warning.to_ascii_lowercase().contains("utf-8")
+}
+
+fn add_analyzer_warning(
+    warnings: &mut Vec<AnalyzerWarning>,
+    path: &str,
+    analyzer: &str,
+    reason: String,
+) {
+    warnings.push(AnalyzerWarning {
+        path: path.to_string(),
+        analyzer: analyzer.to_string(),
+        reason,
+    });
+}
+
+fn push_analysis_entry_warnings(
+    analyzer_warnings: &mut Vec<AnalyzerWarning>,
+    global_warnings: &mut Vec<Warning>,
+    analyzer: &str,
+    path: &str,
+    entry_warnings: &[String],
+) {
+    for warning in entry_warnings {
+        add_analyzer_warning(analyzer_warnings, path, analyzer, warning.clone());
+        push_warning(
+            global_warnings,
+            "TEXT_PARSE_WARNING",
+            path,
+            format!("{}: {}", analyzer, warning),
+        );
+    }
+}
+
+fn analyze_xml_content(
+    path: &str,
+    status: &str,
+    clean_bytes: Option<&[u8]>,
+    modded_bytes: Option<&[u8]>,
+) -> XmlDiffEntry {
+    let mut warnings = Vec::new();
+    let clean_text = decode_text_side(clean_bytes, "clean", &mut warnings);
+    let modded_text = decode_text_side(modded_bytes, "modded", &mut warnings);
+    let diff = diff_lines(&clean_text, &modded_text, MAX_SAMPLE_CHANGES);
+
+    XmlDiffEntry {
+        path: path.to_string(),
+        status: status.to_string(),
+        analyzer: "xml_analyzer".to_string(),
+        parseStrategy: "line_diff_with_xml_hints".to_string(),
+        cleanLines: diff.cleanLineCount,
+        moddedLines: diff.moddedLineCount,
+        addedLines: diff.addedLineCount,
+        removedLines: diff.removedLineCount,
+        numericChanges: diff.numericChanges,
+        colorLikeChanges: diff.colorLikeChanges,
+        sampleChanges: diff.samples,
+        warnings,
+    }
+}
+
+fn analyze_dat_content(
+    path: &str,
+    status: &str,
+    clean_bytes: Option<&[u8]>,
+    modded_bytes: Option<&[u8]>,
+) -> DatDiffEntry {
+    let mut warnings = Vec::new();
+    let clean_text = decode_text_side(clean_bytes, "clean", &mut warnings);
+    let modded_text = decode_text_side(modded_bytes, "modded", &mut warnings);
+    let diff = diff_lines(&clean_text, &modded_text, MAX_SAMPLE_CHANGES);
+
+    let clean_pairs: BTreeMap<String, String> = extract_key_value_pairs(&clean_text).into_iter().collect();
+    let modded_pairs: BTreeMap<String, String> = extract_key_value_pairs(&modded_text).into_iter().collect();
+
+    let mut changed_key_count = 0usize;
+    let mut sample_key_changes = Vec::new();
+    let all_keys: BTreeSet<String> = clean_pairs
+        .keys()
+        .chain(modded_pairs.keys())
+        .cloned()
+        .collect();
+
+    for key in all_keys {
+        if let (Some(old_value), Some(new_value)) = (clean_pairs.get(&key), modded_pairs.get(&key)) {
+            if old_value == new_value {
+                continue;
+            }
+            changed_key_count += 1;
+            if sample_key_changes.len() < MAX_KEY_VALUE_SAMPLES {
+                let old_number = parse_number(old_value);
+                let new_number = parse_number(new_value);
+                sample_key_changes.push(KeyValueChange {
+                    key: key.clone(),
+                    oldValue: sanitize_and_truncate(old_value, 100),
+                    newValue: sanitize_and_truncate(new_value, 100),
+                    valueType: if old_number.is_some() && new_number.is_some() {
+                        "number".to_string()
+                    } else {
+                        "string".to_string()
+                    },
+                    numericDelta: match (old_number, new_number) {
+                        (Some(old_number), Some(new_number)) => Some(new_number - old_number),
+                        _ => None,
+                    },
+                });
+            }
+        }
+    }
+
+    DatDiffEntry {
+        path: path.to_string(),
+        status: status.to_string(),
+        analyzer: "dat_config_analyzer".to_string(),
+        readable: warnings.is_empty(),
+        cleanLines: diff.cleanLineCount,
+        moddedLines: diff.moddedLineCount,
+        changedKeyCount: changed_key_count,
+        addedLines: diff.addedLineCount,
+        removedLines: diff.removedLineCount,
+        numericChanges: diff.numericChanges,
+        sampleKeyChanges: sample_key_changes,
+        sampleChanges: diff.samples,
+        warnings,
+    }
+}
+
+fn analyze_meta_content(
+    path: &str,
+    status: &str,
+    clean_bytes: Option<&[u8]>,
+    modded_bytes: Option<&[u8]>,
+) -> MetaDiffEntry {
+    let mut warnings = Vec::new();
+    let clean_text = decode_text_side(clean_bytes, "clean", &mut warnings);
+    let modded_text = decode_text_side(modded_bytes, "modded", &mut warnings);
+    let diff = diff_lines(&clean_text, &modded_text, MAX_SAMPLE_CHANGES);
+
+    MetaDiffEntry {
+        path: path.to_string(),
+        status: status.to_string(),
+        analyzer: "meta_analyzer".to_string(),
+        parseStrategy: "line_diff_with_meta_hints".to_string(),
+        cleanLines: diff.cleanLineCount,
+        moddedLines: diff.moddedLineCount,
+        addedLines: diff.addedLineCount,
+        removedLines: diff.removedLineCount,
+        numericChanges: diff.numericChanges,
+        colorLikeChanges: diff.colorLikeChanges,
+        sampleChanges: diff.samples,
+        warnings,
+    }
+}
+
+fn analyze_generic_text_content(
+    path: &str,
+    status: &str,
+    ext: &str,
+    clean_bytes: Option<&[u8]>,
+    modded_bytes: Option<&[u8]>,
+) -> GenericTextDiffEntry {
+    let mut warnings = Vec::new();
+    let clean_text = decode_text_side(clean_bytes, "clean", &mut warnings);
+    let modded_text = decode_text_side(modded_bytes, "modded", &mut warnings);
+    let diff = diff_lines(&clean_text, &modded_text, MAX_SAMPLE_CHANGES);
+
+    GenericTextDiffEntry {
+        path: path.to_string(),
+        status: status.to_string(),
+        analyzer: "generic_text_analyzer".to_string(),
+        parseStrategy: format!("line_diff_generic_text_{}", ext),
+        cleanLines: diff.cleanLineCount,
+        moddedLines: diff.moddedLineCount,
+        addedLines: diff.addedLineCount,
+        removedLines: diff.removedLineCount,
+        numericChanges: diff.numericChanges,
+        colorLikeChanges: diff.colorLikeChanges,
+        sampleChanges: diff.samples,
+        warnings,
+    }
+}
+
+fn run_text_analyzers(
+    changes: &[Change],
+    clean_archive_path: &Path,
+    modded_archive_path: &Path,
+    keys: &GtaKeys,
+    depth: usize,
+    warnings: &mut Vec<Warning>,
+) -> Result<TextAnalysisResults> {
+    let text_candidate_changes: Vec<&Change> = changes
+        .iter()
+        .filter(|change| is_text_candidate_ext(&change.extension))
+        .collect();
+
+    let mut stats = TextAnalysisStats {
+        totalCandidates: text_candidate_changes.len(),
+        ..Default::default()
+    };
+
+    if text_candidate_changes.is_empty() {
+        return Ok(TextAnalysisResults {
+            xml_entries: Vec::new(),
+            dat_entries: Vec::new(),
+            meta_entries: Vec::new(),
+            generic_entries: Vec::new(),
+            analyzer_warnings: Vec::new(),
+            stats,
+            file_summaries: Vec::new(),
+        });
+    }
+
+    let target_paths: BTreeSet<String> = text_candidate_changes
+        .iter()
+        .map(|change| normalize_path(&change.path))
+        .collect();
+
+    let clean_bytes_map = extract_text_bytes_for_paths(
+        clean_archive_path,
+        keys,
+        depth,
+        &target_paths,
+        MAX_TEXT_FILE_BYTES,
+        warnings,
+    )
+    .with_context(|| {
+        format!(
+            "failed to extract text bytes from clean archive {}",
+            clean_archive_path.display()
+        )
+    })?;
+
+    let modded_bytes_map = extract_text_bytes_for_paths(
+        modded_archive_path,
+        keys,
+        depth,
+        &target_paths,
+        MAX_TEXT_FILE_BYTES,
+        warnings,
+    )
+    .with_context(|| {
+        format!(
+            "failed to extract text bytes from modded archive {}",
+            modded_archive_path.display()
+        )
+    })?;
+
+    let mut results = TextAnalysisResults {
+        xml_entries: Vec::new(),
+        dat_entries: Vec::new(),
+        meta_entries: Vec::new(),
+        generic_entries: Vec::new(),
+        analyzer_warnings: Vec::new(),
+        stats: TextAnalysisStats::default(),
+        file_summaries: Vec::new(),
+    };
+
+    for change in text_candidate_changes {
+        let path_key = normalize_path(&change.path);
+        let clean_bytes = clean_bytes_map.get(&path_key).map(Vec::as_slice);
+        let modded_bytes = modded_bytes_map.get(&path_key).map(Vec::as_slice);
+        let ext = change.extension.as_str();
+        let analyzer_name = match ext {
+            "xml" => "xml_analyzer",
+            "dat" => "dat_config_analyzer",
+            "meta" => "meta_analyzer",
+            _ => "generic_text_analyzer",
+        };
+
+        let is_too_large = (change.status != "added" && change.cleanSize > MAX_TEXT_FILE_BYTES)
+            || (change.status != "removed" && change.moddedSize > MAX_TEXT_FILE_BYTES);
+        if is_too_large {
+            stats.tooLargeSkipped += 1;
+            push_warning(
+                warnings,
+                "TEXT_ANALYZE_TOO_LARGE",
+                &change.path,
+                format!(
+                    "skipped text analyzer because file exceeds {} bytes",
+                    MAX_TEXT_FILE_BYTES
+                ),
+            );
+            add_analyzer_warning(
+                &mut results.analyzer_warnings,
+                &change.path,
+                analyzer_name,
+                "skipped: file exceeded text analyzer size limit".to_string(),
+            );
+            continue;
+        }
+
+        let missing_required_side = match change.status.as_str() {
+            "added" => modded_bytes.is_none(),
+            "removed" => clean_bytes.is_none(),
+            _ => clean_bytes.is_none() || modded_bytes.is_none(),
+        };
+        if missing_required_side {
+            stats.extractionFailures += 1;
+            push_warning(
+                warnings,
+                "TEXT_ANALYZE_EXTRACTION_FAILED",
+                &change.path,
+                "required text bytes could not be extracted from one or both archives"
+                    .to_string(),
+            );
+            add_analyzer_warning(
+                &mut results.analyzer_warnings,
+                &change.path,
+                analyzer_name,
+                "skipped: required text bytes could not be extracted".to_string(),
+            );
+            continue;
+        }
+
+        let should_require_text_heuristic = is_maybe_text_ext(ext) && !is_definitely_text_ext(ext);
+        if should_require_text_heuristic {
+            let clean_text_like = clean_bytes.map(looks_like_text).unwrap_or(true);
+            let modded_text_like = modded_bytes.map(looks_like_text).unwrap_or(true);
+            if !clean_text_like || !modded_text_like {
+                stats.skippedNotTextBytes += 1;
+                push_warning(
+                    warnings,
+                    "TEXT_ANALYZE_NOT_TEXT_BYTES",
+                    &change.path,
+                    "skipped maybe-text extension because bytes did not look like text"
+                        .to_string(),
+                );
+                add_analyzer_warning(
+                    &mut results.analyzer_warnings,
+                    &change.path,
+                    analyzer_name,
+                    "skipped: bytes did not look like text".to_string(),
+                );
+                continue;
+            }
+        }
+
+        match ext {
+            "xml" => {
+                let entry = analyze_xml_content(&change.path, &change.status, clean_bytes, modded_bytes);
+                if entry.warnings.iter().any(|warning| warning_indicates_parse_failure(warning)) {
+                    stats.parseFailures += 1;
+                }
+                push_analysis_entry_warnings(
+                    &mut results.analyzer_warnings,
+                    warnings,
+                    "xml_analyzer",
+                    &change.path,
+                    &entry.warnings,
+                );
+                results.file_summaries.push(TextAnalysisFileSummary {
+                    path: change.path.clone(),
+                    extension: change.extension.clone(),
+                    analyzer: "xml_analyzer".to_string(),
+                    status: change.status.clone(),
+                    sizeDelta: change.sizeDelta,
+                    addedLines: entry.addedLines,
+                    removedLines: entry.removedLines,
+                    numericChanges: entry.numericChanges,
+                    colorLikeChanges: entry.colorLikeChanges,
+                });
+                results.xml_entries.push(entry);
+                stats.analyzedFiles += 1;
+                stats.xmlAnalyzed += 1;
+            }
+            "dat" => {
+                let entry = analyze_dat_content(&change.path, &change.status, clean_bytes, modded_bytes);
+                if entry.warnings.iter().any(|warning| warning_indicates_parse_failure(warning)) {
+                    stats.parseFailures += 1;
+                }
+                push_analysis_entry_warnings(
+                    &mut results.analyzer_warnings,
+                    warnings,
+                    "dat_config_analyzer",
+                    &change.path,
+                    &entry.warnings,
+                );
+                results.file_summaries.push(TextAnalysisFileSummary {
+                    path: change.path.clone(),
+                    extension: change.extension.clone(),
+                    analyzer: "dat_config_analyzer".to_string(),
+                    status: change.status.clone(),
+                    sizeDelta: change.sizeDelta,
+                    addedLines: entry.addedLines,
+                    removedLines: entry.removedLines,
+                    numericChanges: entry.numericChanges,
+                    colorLikeChanges: 0,
+                });
+                results.dat_entries.push(entry);
+                stats.analyzedFiles += 1;
+                stats.datAnalyzed += 1;
+            }
+            "meta" => {
+                let entry = analyze_meta_content(&change.path, &change.status, clean_bytes, modded_bytes);
+                if entry.warnings.iter().any(|warning| warning_indicates_parse_failure(warning)) {
+                    stats.parseFailures += 1;
+                }
+                push_analysis_entry_warnings(
+                    &mut results.analyzer_warnings,
+                    warnings,
+                    "meta_analyzer",
+                    &change.path,
+                    &entry.warnings,
+                );
+                results.file_summaries.push(TextAnalysisFileSummary {
+                    path: change.path.clone(),
+                    extension: change.extension.clone(),
+                    analyzer: "meta_analyzer".to_string(),
+                    status: change.status.clone(),
+                    sizeDelta: change.sizeDelta,
+                    addedLines: entry.addedLines,
+                    removedLines: entry.removedLines,
+                    numericChanges: entry.numericChanges,
+                    colorLikeChanges: entry.colorLikeChanges,
+                });
+                results.meta_entries.push(entry);
+                stats.analyzedFiles += 1;
+                stats.metaAnalyzed += 1;
+            }
+            _ => {
+                let entry = analyze_generic_text_content(
+                    &change.path,
+                    &change.status,
+                    ext,
+                    clean_bytes,
+                    modded_bytes,
+                );
+                if entry.warnings.iter().any(|warning| warning_indicates_parse_failure(warning)) {
+                    stats.parseFailures += 1;
+                }
+                push_analysis_entry_warnings(
+                    &mut results.analyzer_warnings,
+                    warnings,
+                    "generic_text_analyzer",
+                    &change.path,
+                    &entry.warnings,
+                );
+                results.file_summaries.push(TextAnalysisFileSummary {
+                    path: change.path.clone(),
+                    extension: change.extension.clone(),
+                    analyzer: "generic_text_analyzer".to_string(),
+                    status: change.status.clone(),
+                    sizeDelta: change.sizeDelta,
+                    addedLines: entry.addedLines,
+                    removedLines: entry.removedLines,
+                    numericChanges: entry.numericChanges,
+                    colorLikeChanges: entry.colorLikeChanges,
+                });
+                results.generic_entries.push(entry);
+                stats.analyzedFiles += 1;
+                stats.genericTextAnalyzed += 1;
+            }
+        }
+    }
+
+    stats.skippedFiles = stats.totalCandidates.saturating_sub(stats.analyzedFiles);
+    results.stats = stats;
+    Ok(results)
+}
+
+fn write_text_analysis_summary(
+    out_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    stats: &TextAnalysisStats,
+    results: &TextAnalysisResults,
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct TopChangedFile {
+        path: String,
+        extension: String,
+        analyzer: String,
+        status: String,
+        sizeDelta: i64,
+    }
+
+    #[derive(Serialize)]
+    struct TopExtension {
+        extension: String,
+        count: usize,
+    }
+
+    #[derive(Serialize)]
+    struct TextAnalysisSummaryFile<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        stats: &'a TextAnalysisStats,
+        topChangedFiles: Vec<TopChangedFile>,
+        topExtensions: Vec<TopExtension>,
+        recommendedNextPhase: &'a str,
+    }
+
+    let mut top_changed_files = results.file_summaries.clone();
+    top_changed_files.sort_by(|a, b| {
+        b.sizeDelta
+            .abs()
+            .cmp(&a.sizeDelta.abs())
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    top_changed_files.truncate(10);
+
+    let mut extension_counts = BTreeMap::new();
+    for entry in &results.file_summaries {
+        *extension_counts.entry(entry.extension.clone()).or_insert(0usize) += 1;
+    }
+    let mut top_extensions: Vec<TopExtension> = extension_counts
+        .into_iter()
+        .map(|(extension, count)| TopExtension { extension, count })
+        .collect();
+    top_extensions.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.extension.cmp(&b.extension)));
+    top_extensions.truncate(10);
+
+    let summary = TextAnalysisSummaryFile {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "text_analysis_summary",
+        tool,
+        timing,
+        stats,
+        topChangedFiles: top_changed_files
+            .into_iter()
+            .map(|entry| TopChangedFile {
+                path: entry.path,
+                extension: entry.extension,
+                analyzer: entry.analyzer,
+                status: entry.status,
+                sizeDelta: entry.sizeDelta,
+            })
+            .collect(),
+        topExtensions: top_extensions,
+        recommendedNextPhase: "R0.8 YTD/GFX/YPT binary analyzers",
+    };
+
+    let out = out_dir.join("text_analysis_summary.json");
+    let json = serde_json::to_string_pretty(&summary)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_text_diff_entries<T: Serialize>(
+    out_dir: &Path,
+    file_name: &str,
+    artifact_type: &str,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    entries: &[T],
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct TextDiffStats {
+        total: usize,
+    }
+
+    #[derive(Serialize)]
+    struct TextDiffFile<'a, T> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        stats: TextDiffStats,
+        entries: &'a [T],
+    }
+
+    let report = TextDiffFile {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: artifact_type,
+        tool,
+        timing,
+        stats: TextDiffStats { total: entries.len() },
+        entries,
+    };
+
+    let out = out_dir.join(file_name);
+    let json = serde_json::to_string_pretty(&report)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_xml_diffs(
+    out_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    entries: &[XmlDiffEntry],
+) -> Result<()> {
+    write_text_diff_entries(out_dir, "xml_diffs.json", "xml_diffs", tool, timing, entries)
+}
+
+fn write_dat_diffs(
+    out_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    entries: &[DatDiffEntry],
+) -> Result<()> {
+    write_text_diff_entries(out_dir, "dat_diffs.json", "dat_diffs", tool, timing, entries)
+}
+
+fn write_meta_diffs(
+    out_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    entries: &[MetaDiffEntry],
+) -> Result<()> {
+    write_text_diff_entries(out_dir, "meta_diffs.json", "meta_diffs", tool, timing, entries)
+}
+
+fn write_generic_text_diffs(
+    out_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    entries: &[GenericTextDiffEntry],
+) -> Result<()> {
+    write_text_diff_entries(
+        out_dir,
+        "generic_text_diffs.json",
+        "generic_text_diffs",
+        tool,
+        timing,
+        entries,
+    )
+}
+
+fn write_analyzer_warnings(out_dir: &Path, warnings: &[AnalyzerWarning]) -> Result<()> {
+    #[derive(Serialize)]
+    struct AnalyzerWarningsFile<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        total: usize,
+        warnings: &'a [AnalyzerWarning],
+    }
+
+    let report = AnalyzerWarningsFile {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "analyzer_warnings",
+        total: warnings.len(),
+        warnings,
+    };
+
+    let out = out_dir.join("analyzer_warnings.json");
+    let json = serde_json::to_string_pretty(&report)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_ai_readable_change_notes(
+    out_dir: &Path,
+    results: &TextAnalysisResults,
+) -> Result<()> {
+    let mut summaries = results.file_summaries.clone();
+    summaries.sort_by(|a, b| a.path.cmp(&b.path));
+
+    let mut lines = Vec::new();
+    for entry in summaries {
+        let note = AiChangeNote {
+            task: "explain_text_config_change".to_string(),
+            path: entry.path,
+            extension: entry.extension,
+            analyzer: entry.analyzer,
+            changeSummary: AiChangeSummary {
+                addedLines: entry.addedLines,
+                removedLines: entry.removedLines,
+                numericChanges: entry.numericChanges,
+                colorLikeChanges: entry.colorLikeChanges,
+            },
+            question: "What visual/config component might this change relate to? Treat as hypothesis only.".to_string(),
+        };
+        lines.push(serde_json::to_string(&note)?);
+    }
+
+    let out = out_dir.join("ai_readable_change_notes.jsonl");
+    fs::write(&out, lines.join("\n"))?;
+    Ok(())
+}
+
 mod tests {
     use super::*;
 
@@ -4423,6 +5632,107 @@ mod tests {
         assert_eq!(binary_count, 1);
         assert_eq!(analyzer_count, 1);
     }
+
+    #[test]
+    fn looks_like_text_detects_text() {
+        assert!(looks_like_text(b"hello world\nfoo=bar\n"));
+        assert!(!looks_like_text(b"\x00\x01\x02binary data"));
+    }
+
+    #[test]
+    fn looks_like_text_rejects_null_bytes() {
+        assert!(!looks_like_text(b"has\x00null"));
+    }
+
+    #[test]
+    fn parse_number_parses_float() {
+        assert_eq!(parse_number("1.5"), Some(1.5));
+        assert_eq!(parse_number("not_a_number"), None);
+    }
+
+    #[test]
+    fn diff_lines_basic() {
+        let clean = "line1\nline2\nline3\n";
+        let modded = "line1\nline2_changed\nline3\n";
+        let result = diff_lines(clean, modded, 10);
+        assert!(
+            result.addedLineCount + result.removedLineCount > 0
+                || result.cleanLineCount != result.moddedLineCount
+        );
+    }
+
+    #[test]
+    fn extract_key_value_pairs_equals() {
+        let text = "fog_intensity=0.7\nbright_level=2.0\n";
+        let pairs = extract_key_value_pairs(text);
+        assert!(pairs.iter().any(|(k, _)| k == "fog_intensity"));
+    }
+
+    #[test]
+    fn extract_key_value_pairs_colon() {
+        let text = "key: value\nanother: stuff\n";
+        let pairs = extract_key_value_pairs(text);
+        assert!(pairs.iter().any(|(k, _)| k == "key"));
+    }
+
+    #[test]
+    fn analyze_xml_content_produces_entry() {
+        let clean = b"<root><value>0.5</value></root>";
+        let modded = b"<root><value>0.3</value></root>";
+        let entry = analyze_xml_content("test.xml", "modified", Some(clean), Some(modded));
+        assert_eq!(entry.analyzer, "xml_analyzer");
+        assert!(entry.numericChanges > 0 || entry.addedLines > 0 || entry.removedLines > 0);
+    }
+
+    #[test]
+    fn analyze_dat_content_detects_key_change() {
+        let clean = b"fog_intensity=0.7\nbright=1.0\n";
+        let modded = b"fog_intensity=0.2\nbright=1.0\n";
+        let entry = analyze_dat_content("bloodfx.dat", "modified", Some(clean), Some(modded));
+        assert!(entry.readable);
+        assert!(entry.changedKeyCount > 0 || entry.addedLines > 0);
+    }
+
+    #[test]
+    fn ai_readable_change_notes_serializes() {
+        let note = AiChangeNote {
+            task: "explain_text_config_change".to_string(),
+            path: "test.xml".to_string(),
+            extension: "xml".to_string(),
+            analyzer: "xml_analyzer".to_string(),
+            changeSummary: AiChangeSummary {
+                addedLines: 2,
+                removedLines: 1,
+                numericChanges: 3,
+                colorLikeChanges: 0,
+            },
+            question: "What visual/config component might this change relate to? Treat as hypothesis only.".to_string(),
+        };
+        let json = serde_json::to_string(&note).unwrap();
+        assert!(json.contains("explain_text_config_change"));
+        assert!(!json.contains("password"));
+    }
+
+    #[test]
+    fn text_analysis_summary_counts_match() {
+        let stats = TextAnalysisStats {
+            totalCandidates: 10,
+            analyzedFiles: 8,
+            skippedFiles: 2,
+            xmlAnalyzed: 3,
+            datAnalyzed: 2,
+            metaAnalyzed: 2,
+            genericTextAnalyzed: 1,
+            parseFailures: 0,
+            extractionFailures: 2,
+            tooLargeSkipped: 0,
+            skippedNotTextBytes: 0,
+        };
+        assert_eq!(
+            stats.xmlAnalyzed + stats.datAnalyzed + stats.metaAnalyzed + stats.genericTextAnalyzed,
+            stats.analyzedFiles
+        );
+    }
 }
 
 fn main() -> Result<()> {
@@ -4703,6 +6013,7 @@ fn main() -> Result<()> {
             write_baseline_metadata(
                 &out_dir,
                 &archive_identity,
+                &archive.display().to_string(),
                 &tool,
                 &scan,
                 &rules.metadata,
@@ -4837,6 +6148,84 @@ fn main() -> Result<()> {
                 pattern_count,
                 &warnings,
             )?;
+
+            if args.analyze_text {
+                let clean_archive_path = if let Some(ref p) = args.clean {
+                    Some(p.clone())
+                } else if let Some(ref p) = baseline_meta.baselineArchivePath {
+                    if !p.is_empty() {
+                        Some(PathBuf::from(p))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                match clean_archive_path {
+                    None => {
+                        push_warning(
+                            &mut warnings,
+                            "TEXT_ANALYZE_SKIPPED",
+                            "",
+                            "--analyze-text requires --clean <clean.rpf> (or re-run baseline-scan to store path)".to_string(),
+                        );
+                        println!("text analysis skipped: clean archive path not available");
+                    }
+                    Some(clean_path) => {
+                        match run_text_analyzers(
+                            &changes,
+                            &clean_path,
+                            &modded,
+                            &keys,
+                            args.depth,
+                            &mut warnings,
+                        ) {
+                            Ok(results) => {
+                                write_text_analysis_summary(
+                                    &out_dir,
+                                    &tool,
+                                    &timing,
+                                    &results.stats,
+                                    &results,
+                                )?;
+                                write_xml_diffs(&out_dir, &tool, &timing, &results.xml_entries)?;
+                                write_dat_diffs(&out_dir, &tool, &timing, &results.dat_entries)?;
+                                write_meta_diffs(&out_dir, &tool, &timing, &results.meta_entries)?;
+                                write_generic_text_diffs(
+                                    &out_dir,
+                                    &tool,
+                                    &timing,
+                                    &results.generic_entries,
+                                )?;
+                                write_analyzer_warnings(&out_dir, &results.analyzer_warnings)?;
+                                write_ai_readable_change_notes(&out_dir, &results)?;
+                                println!("text analysis complete");
+                                println!("  xml analyzed: {}", results.stats.xmlAnalyzed);
+                                println!("  dat analyzed: {}", results.stats.datAnalyzed);
+                                println!("  meta analyzed: {}", results.stats.metaAnalyzed);
+                                println!(
+                                    "  generic text analyzed: {}",
+                                    results.stats.genericTextAnalyzed
+                                );
+                                println!(
+                                    "  extraction failures: {}",
+                                    results.stats.extractionFailures
+                                );
+                            }
+                            Err(e) => {
+                                push_warning(
+                                    &mut warnings,
+                                    "TEXT_ANALYZE_ERROR",
+                                    "",
+                                    format!("text analysis failed: {}", e),
+                                );
+                                println!("text analysis failed: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
 
             let added = changes.iter().filter(|c| c.status == "added").count();
             let removed = changes.iter().filter(|c| c.status == "removed").count();

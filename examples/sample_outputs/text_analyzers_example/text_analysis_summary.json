@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "text_analysis_summary",
+  "tool": {
+    "name": "rpf_backend_rs",
+    "version": "0.2.0"
+  },
+  "timing": {
+    "startedAt": "2025-01-01T00:00:00Z",
+    "elapsedSeconds": 4.20
+  },
+  "stats": {
+    "totalCandidates": 960,
+    "analyzedFiles": 141,
+    "skippedFiles": 819,
+    "xmlAnalyzed": 41,
+    "datAnalyzed": 29,
+    "metaAnalyzed": 70,
+    "genericTextAnalyzed": 1,
+    "parseFailures": 0,
+    "extractionFailures": 0,
+    "tooLargeSkipped": 0,
+    "skippedNotTextBytes": 819
+  },
+  "topChangedFiles": [
+    {
+      "path": "timecycle_mods_1.xml",
+      "extension": "xml",
+      "analyzer": "xml_analyzer",
+      "status": "modified",
+      "sizeDelta": -1073550
+    },
+    {
+      "path": "weapons.meta",
+      "extension": "meta",
+      "analyzer": "meta_analyzer",
+      "status": "modified",
+      "sizeDelta": 512000
+    },
+    {
+      "path": "visualsettings.dat",
+      "extension": "dat",
+      "analyzer": "dat_config_analyzer",
+      "status": "modified",
+      "sizeDelta": 1024
+    }
+  ],
+  "topExtensions": [
+    { "extension": "meta", "count": 70 },
+    { "extension": "xml", "count": 41 },
+    { "extension": "dat", "count": 29 },
+    { "extension": "txt", "count": 1 }
+  ],
+  "recommendedNextPhase": "R0.8 YTD/GFX/YPT binary analyzers"
+}
