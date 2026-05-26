@@ -145,6 +145,7 @@ struct Args {
     std::string mode;
     bool mode_set = false;
     bool analyze_text = false;
+    bool build_learning_corpus = false;
     DeprecatedModeFlag deprecated_mode = DeprecatedModeFlag::None;
     fs::path component_rules;
     fs::path target_rules;
@@ -168,7 +169,7 @@ Commands:
                   [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
   diff-against-baseline --modded <modded.update.rpf> --baseline <baseline_output_dir>
                   --keys <keys_dir> --out <diff_output_dir>
-                  [--backend <rpf_backend_rs.exe>] [--depth 2] [--clean <clean.rpf>] [--analyze-text]
+                  [--backend <rpf_backend_rs.exe>] [--depth 2] [--clean <clean.rpf>] [--analyze-text] [--build-learning-corpus]
                   [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
   classify-rpf    --archive <unknown.rpf> --baseline <baseline_output_dir>
                   --keys <keys_dir> --out <classification.json>
@@ -271,6 +272,7 @@ static Args parse_args(int argc, char** argv) {
         else if (a == "--rules-dir") args.rules_dir = need(a);
         else if (a == "--baseline") args.baseline = need(a);
         else if (a == "--analyze-text") args.analyze_text = true;
+        else if (a == "--build-learning-corpus") args.build_learning_corpus = true;
         else if (a == "--help" || a == "-h") {
             usage();
             std::exit(0);
@@ -376,6 +378,9 @@ static std::vector<std::string> build_backend_args(const Args& args) {
         }
         if (args.analyze_text) {
             v.push_back("--analyze-text");
+        }
+        if (args.build_learning_corpus) {
+            v.push_back("--build-learning-corpus");
         }
         v.push_back("--keys");
         v.push_back(path_to_utf8(args.keys));

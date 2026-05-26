@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "analyzer_coverage",
+  "report": {
+    "totalCandidates": 960,
+    "analyzedFiles": 141,
+    "skippedFiles": 819,
+    "xmlAnalyzed": 41,
+    "datAnalyzed": 29,
+    "metaAnalyzed": 70,
+    "genericAnalyzed": 1,
+    "parseFailures": 22,
+    "extractionFailures": 0,
+    "tooLargeSkipped": 0,
+    "binaryPsoSkipped": 819,
+    "coveragePercent": 14.4,
+    "note": "Coverage reflects current readable text analyzers only. Binary/PSO files (.ymt/.ymap/.ytyp etc) are intentionally skipped until future binary analyzers exist."
+  }
+}

@@ -306,6 +306,7 @@ struct Args {
     mode_was_explicit: bool,
     deprecated_flag_used: bool,
     analyze_text: bool,
+    build_learning_corpus: bool,
     component_rules: Option<PathBuf>,
     target_rules: Option<PathBuf>,
     rules_dir: Option<PathBuf>,
@@ -330,7 +331,7 @@ Commands:
                 [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
   diff-against-baseline --modded <modded.update.rpf> --baseline <baseline_output_dir>
                 --keys <keys_dir> --out <diff_output_dir>
-                [--depth 2] [--clean <clean.rpf>] [--analyze-text]
+                [--depth 2] [--clean <clean.rpf>] [--analyze-text] [--build-learning-corpus]
                 [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
   classify-rpf  --archive <unknown.rpf> --baseline <baseline_output_dir>
                 --keys <keys_dir> --out <classification.json>
@@ -385,6 +386,7 @@ fn parse_args() -> Result<Args> {
         mode_was_explicit: false,
         deprecated_flag_used: false,
         analyze_text: false,
+        build_learning_corpus: false,
         component_rules: None,
         target_rules: None,
         rules_dir: None,
@@ -438,22 +440,27 @@ fn parse_args() -> Result<Args> {
                     Some(it.next().context("missing value for --scanner-version")?)
             }
             "--component-rules" => {
-                args.component_rules =
-                    Some(PathBuf::from(it.next().context("missing value for --component-rules")?))
+                args.component_rules = Some(PathBuf::from(
+                    it.next().context("missing value for --component-rules")?,
+                ))
             }
             "--target-rules" => {
-                args.target_rules =
-                    Some(PathBuf::from(it.next().context("missing value for --target-rules")?))
+                args.target_rules = Some(PathBuf::from(
+                    it.next().context("missing value for --target-rules")?,
+                ))
             }
             "--rules-dir" => {
-                args.rules_dir =
-                    Some(PathBuf::from(it.next().context("missing value for --rules-dir")?))
+                args.rules_dir = Some(PathBuf::from(
+                    it.next().context("missing value for --rules-dir")?,
+                ))
             }
             "--baseline" => {
-                args.baseline =
-                    Some(PathBuf::from(it.next().context("missing value for --baseline")?))
+                args.baseline = Some(PathBuf::from(
+                    it.next().context("missing value for --baseline")?,
+                ))
             }
             "--analyze-text" => args.analyze_text = true,
+            "--build-learning-corpus" => args.build_learning_corpus = true,
             "--all" => {
                 args.deprecated_flag_used = true;
                 deprecated_mode = Some(ScanMode::Full);
@@ -639,14 +646,14 @@ fn collect_top_level_folders(entries: &BTreeMap<String, EntryInfo>) -> Vec<Strin
 /// update.rpf uses a flat structure — no common/ or x64/ directory prefixes.
 /// Nested RPFs appear as path prefixes like "ptfx.rpf/core.ypt".
 const ANCHOR_PATHS: &[&str] = &[
-    "american_rel.rpf/",        // nested RPF with GXT2 text strings — highly characteristic
-    "ptfx.rpf/",                // nested particle effects RPF — highly characteristic
-    "scaleform_frontend.rpf/",  // nested scaleform UI RPF — characteristic
-    "visualsettings.dat",       // visual settings — only in update.rpf
-    "gta5_cache_y.dat",         // game cache — only in update.rpf
-    "popcycle.dat",             // population cycle data
-    "carcols.meta",             // car color definitions
-    "hudcolor.dat",             // HUD color config
+    "american_rel.rpf/", // nested RPF with GXT2 text strings — highly characteristic
+    "ptfx.rpf/",         // nested particle effects RPF — highly characteristic
+    "scaleform_frontend.rpf/", // nested scaleform UI RPF — characteristic
+    "visualsettings.dat", // visual settings — only in update.rpf
+    "gta5_cache_y.dat",  // game cache — only in update.rpf
+    "popcycle.dat",      // population cycle data
+    "carcols.meta",      // car color definitions
+    "hudcolor.dat",      // HUD color config
 ];
 
 fn check_anchor_paths(entries: &BTreeMap<String, EntryInfo>) -> AnchorCheckResult {
@@ -847,9 +854,8 @@ fn load_component_rules_from_path(
 ) -> Result<ComponentRules> {
     let contents = fs::read_to_string(path)
         .with_context(|| format!("failed to read component rules file {}", path.display()))?;
-    let raw: ComponentRulesFile = serde_json::from_str(&contents).with_context(|| {
-        format!("failed to parse component rules file {}", path.display())
-    })?;
+    let raw: ComponentRulesFile = serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse component rules file {}", path.display()))?;
     Ok(build_component_rules(
         raw,
         &path.display().to_string(),
@@ -1461,7 +1467,8 @@ fn diff_maps(
                         "sha256 differs"
                     };
 
-                    let mut meta = build_rich_metadata(&c.path, "modified", c.sizeBytes, m.sizeBytes);
+                    let mut meta =
+                        build_rich_metadata(&c.path, "modified", c.sizeBytes, m.sizeBytes);
                     if let Some(rules) = component_rules {
                         let matches = match_component_rules(&c.path, rules);
                         apply_component_rule_metadata(&mut meta, &matches);
@@ -1724,7 +1731,12 @@ fn apply_fallback_classification(ch: &Change, reports: &mut BTreeMap<String, Com
     // Tracer / hit effect
     if p.contains("ptfx_bullet_tracer") {
         let report = ensure_component_report(reports, "tracer", "Tracer");
-        add_hit(report, ch, "high", "Exact ptfx_bullet_tracer asset changed.");
+        add_hit(
+            report,
+            ch,
+            "high",
+            "Exact ptfx_bullet_tracer asset changed.",
+        );
     }
 
     if p.contains("ptfx_blood_spray") {
@@ -1791,8 +1803,7 @@ fn apply_fallback_classification(ch: &Change, reports: &mut BTreeMap<String, Com
         add_hit(report, ch, "high", "Timecycle/weather XML changed.");
     }
 
-    if b == "timecycle_mods_4.xml" || p.ends_with("common/data/timecycle/timecycle_mods_4.xml")
-    {
+    if b == "timecycle_mods_4.xml" || p.ends_with("common/data/timecycle/timecycle_mods_4.xml") {
         let report =
             ensure_component_report(reports, "kill_effect", "Kill Effect / Damage Screen Effect");
         add_hit(
@@ -2112,7 +2123,10 @@ fn write_full_clean_tree(
         .collect();
 
     let nested_count = entries.values().filter(|e| e.extension == "rpf").count();
-    let text_count = entries.values().filter(|e| is_text_candidate(&e.path)).count();
+    let text_count = entries
+        .values()
+        .filter(|e| is_text_candidate(&e.path))
+        .count();
     let paths: Vec<&str> = entries.values().map(|e| e.path.as_str()).collect();
 
     let tree = CleanTree {
@@ -2277,7 +2291,8 @@ fn write_baseline_metadata(
             usedFallbackRules: rules.usedFallbackRules,
         },
         artifacts: artifact_names,
-        reusableWhen: "archive sha256, scanner version, schema version, and rules version all match",
+        reusableWhen:
+            "archive sha256, scanner version, schema version, and rules version all match",
     };
 
     let out = out_dir.join("baseline_metadata.json");
@@ -2304,10 +2319,18 @@ struct BaselineMetadataFile {
 
 fn load_baseline_manifest(baseline_dir: &Path) -> Result<BTreeMap<String, EntryInfo>> {
     let manifest_path = baseline_dir.join("full_clean_manifest.json");
-    let contents = fs::read_to_string(&manifest_path)
-        .with_context(|| format!("failed to read baseline manifest: {}", manifest_path.display()))?;
-    let parsed: BaselineManifestFile = serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse baseline manifest: {}", manifest_path.display()))?;
+    let contents = fs::read_to_string(&manifest_path).with_context(|| {
+        format!(
+            "failed to read baseline manifest: {}",
+            manifest_path.display()
+        )
+    })?;
+    let parsed: BaselineManifestFile = serde_json::from_str(&contents).with_context(|| {
+        format!(
+            "failed to parse baseline manifest: {}",
+            manifest_path.display()
+        )
+    })?;
     let mut map = BTreeMap::new();
     for entry in parsed.files {
         map.insert(entry.path.clone(), entry);
@@ -2490,7 +2513,10 @@ fn write_full_modded_tree(
         .collect();
 
     let nested_count = entries.values().filter(|e| e.extension == "rpf").count();
-    let text_count = entries.values().filter(|e| is_text_candidate(&e.path)).count();
+    let text_count = entries
+        .values()
+        .filter(|e| is_text_candidate(&e.path))
+        .count();
     let paths: Vec<&str> = entries.values().map(|e| e.path.as_str()).collect();
 
     let tree = ModdedTree {
@@ -2956,9 +2982,7 @@ fn build_unknown_entries(changes: &[Change]) -> Vec<UnknownEntry> {
                 c.category.clone()
             } else {
                 match ext {
-                    "xml" | "dat" | "meta" | "ini" | "cfg" | "txt" => {
-                        "config_or_text".to_string()
-                    }
+                    "xml" | "dat" | "meta" | "ini" | "cfg" | "txt" => "config_or_text".to_string(),
                     "ytd" => "texture_dictionary".to_string(),
                     "ypt" => "particle_container".to_string(),
                     "gfx" => "scaleform_ui".to_string(),
@@ -2995,8 +3019,8 @@ fn recommended_next_step_for_pattern(ext: Option<&str>, archive_group: bool) -> 
     }
 
     match ext.unwrap_or("") {
-        "xml" | "dat" | "meta" | "txt" | "json" | "ini" | "cfg" | "ymt" | "ymap"
-        | "ytyp" | "nametable" => "run DAT/META/XML analyzer in R0.7",
+        "xml" | "dat" | "meta" | "txt" | "json" | "ini" | "cfg" | "ymt" | "ymap" | "ytyp"
+        | "nametable" => "run DAT/META/XML analyzer in R0.7",
         "ytd" => "run YTD texture analyzer",
         "ypt" => "run YPT particle analyzer",
         "rpf" => "run nested RPF scan",
@@ -3059,7 +3083,10 @@ fn write_unknown_changes(
                 .iter()
                 .filter(|entry| !is_text_candidate_ext(&entry.extension))
                 .count(),
-            analyzerRequired: entries.iter().filter(|entry| entry.analyzerRequired).count(),
+            analyzerRequired: entries
+                .iter()
+                .filter(|entry| entry.analyzerRequired)
+                .count(),
         },
         entries,
         warnings,
@@ -3370,13 +3397,19 @@ fn write_unknown_summary(
 
     let mut extension_counts = BTreeMap::new();
     for entry in entries {
-        *extension_counts.entry(entry.extension.clone()).or_insert(0usize) += 1;
+        *extension_counts
+            .entry(entry.extension.clone())
+            .or_insert(0usize) += 1;
     }
     let mut top_unknown_extensions: Vec<ExtCount> = extension_counts
         .into_iter()
         .map(|(extension, count)| ExtCount { extension, count })
         .collect();
-    top_unknown_extensions.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.extension.cmp(&b.extension)));
+    top_unknown_extensions.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| a.extension.cmp(&b.extension))
+    });
     top_unknown_extensions.truncate(10);
 
     let mut folder_counts = BTreeMap::new();
@@ -3408,7 +3441,10 @@ fn write_unknown_summary(
                 .iter()
                 .filter(|entry| !is_text_candidate_ext(&entry.extension))
                 .count(),
-            analyzerRequired: entries.iter().filter(|entry| entry.analyzerRequired).count(),
+            analyzerRequired: entries
+                .iter()
+                .filter(|entry| entry.analyzerRequired)
+                .count(),
             topUnknownExtensions: top_unknown_extensions,
             topUnknownFolders: top_unknown_folders,
             candidatePatternCount: pattern_count,
@@ -3445,8 +3481,12 @@ fn load_baseline_fingerprint(baseline_dir: &Path) -> Result<BaselineFingerprintF
     let fp_path = baseline_dir.join("baseline_update_tree_fingerprint.json");
     let contents = fs::read_to_string(&fp_path)
         .with_context(|| format!("failed to read baseline fingerprint: {}", fp_path.display()))?;
-    serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse baseline fingerprint: {}", fp_path.display()))
+    serde_json::from_str(&contents).with_context(|| {
+        format!(
+            "failed to parse baseline fingerprint: {}",
+            fp_path.display()
+        )
+    })
 }
 
 /// Copies an RPF archive to a temp directory under a given logical filename.
@@ -3458,8 +3498,8 @@ fn copy_archive_to_logical_name(
     physical_path: &Path,
     logical_name: &str,
 ) -> Result<(TempDir, PathBuf)> {
-    let temp_dir = TempDir::new()
-        .context("failed to create temp dir for logical-name classify scan")?;
+    let temp_dir =
+        TempDir::new().context("failed to create temp dir for logical-name classify scan")?;
     let dest = temp_dir.path().join(logical_name);
     fs::copy(physical_path, &dest).with_context(|| {
         format!(
@@ -3576,7 +3616,10 @@ fn score_classify_archive(
 
     // Penalty: narrow DLC/vehicle/audio archive
     let ext_keys: BTreeSet<&str> = hist.keys().map(|s| s.as_str()).collect();
-    let vehicle_exts: BTreeSet<&str> = ["yft", "ytd", "ydr", "ydd", "yld"].iter().copied().collect();
+    let vehicle_exts: BTreeSet<&str> = ["yft", "ytd", "ydr", "ydd", "yld"]
+        .iter()
+        .copied()
+        .collect();
     let audio_exts: BTreeSet<&str> = ["awc", "rel"].iter().copied().collect();
     let update_signals: BTreeSet<&str> = ["yvr", "ysc", "gxt2"].iter().copied().collect();
 
@@ -3586,7 +3629,8 @@ fn score_classify_archive(
 
     if !has_update_signals && only_vehicles {
         score -= 25;
-        reasons.push("Appears to be vehicle-only asset pack (no script/text files, -25)".to_string());
+        reasons
+            .push("Appears to be vehicle-only asset pack (no script/text files, -25)".to_string());
     } else if !has_update_signals && only_audio {
         score -= 25;
         reasons.push("Appears to be audio-only pack (no script/text files, -25)".to_string());
@@ -4048,9 +4092,18 @@ fn extract_numbers_from_line(line: &str) -> Vec<f64> {
 
 fn is_color_like(line: &str) -> bool {
     let lower = line.to_lowercase();
-    let has_named_rgb = (lower.contains("r=") || lower.contains("r =") || lower.contains("red=") || lower.contains("red ="))
-        && (lower.contains("g=") || lower.contains("g =") || lower.contains("green=") || lower.contains("green ="))
-        && (lower.contains("b=") || lower.contains("b =") || lower.contains("blue=") || lower.contains("blue ="));
+    let has_named_rgb = (lower.contains("r=")
+        || lower.contains("r =")
+        || lower.contains("red=")
+        || lower.contains("red ="))
+        && (lower.contains("g=")
+            || lower.contains("g =")
+            || lower.contains("green=")
+            || lower.contains("green ="))
+        && (lower.contains("b=")
+            || lower.contains("b =")
+            || lower.contains("blue=")
+            || lower.contains("blue ="));
     if has_named_rgb {
         return true;
     }
@@ -4074,7 +4127,9 @@ fn count_numeric_changes(clean_lines: &[&str], modded_lines: &[&str]) -> usize {
         .filter(|(clean_line, modded_line)| {
             let clean_numbers = extract_numbers_from_line(clean_line);
             let modded_numbers = extract_numbers_from_line(modded_line);
-            !clean_numbers.is_empty() && !modded_numbers.is_empty() && clean_numbers != modded_numbers
+            !clean_numbers.is_empty()
+                && !modded_numbers.is_empty()
+                && clean_numbers != modded_numbers
         })
         .count()
 }
@@ -4104,7 +4159,10 @@ fn classify_change_hint(old_line: &str, new_line: &str) -> String {
     } else {
         let clean_numbers = extract_numbers_from_line(old_line);
         let modded_numbers = extract_numbers_from_line(new_line);
-        if !clean_numbers.is_empty() && !modded_numbers.is_empty() && clean_numbers != modded_numbers {
+        if !clean_numbers.is_empty()
+            && !modded_numbers.is_empty()
+            && clean_numbers != modded_numbers
+        {
             "numeric_change".to_string()
         } else {
             "text_change".to_string()
@@ -4324,8 +4382,10 @@ fn analyze_dat_content(
     let modded_text = decode_text_side(modded_bytes, "modded", &mut warnings);
     let diff = diff_lines(&clean_text, &modded_text, MAX_SAMPLE_CHANGES);
 
-    let clean_pairs: BTreeMap<String, String> = extract_key_value_pairs(&clean_text).into_iter().collect();
-    let modded_pairs: BTreeMap<String, String> = extract_key_value_pairs(&modded_text).into_iter().collect();
+    let clean_pairs: BTreeMap<String, String> =
+        extract_key_value_pairs(&clean_text).into_iter().collect();
+    let modded_pairs: BTreeMap<String, String> =
+        extract_key_value_pairs(&modded_text).into_iter().collect();
 
     let mut changed_key_count = 0usize;
     let mut sample_key_changes = Vec::new();
@@ -4336,7 +4396,8 @@ fn analyze_dat_content(
         .collect();
 
     for key in all_keys {
-        if let (Some(old_value), Some(new_value)) = (clean_pairs.get(&key), modded_pairs.get(&key)) {
+        if let (Some(old_value), Some(new_value)) = (clean_pairs.get(&key), modded_pairs.get(&key))
+        {
             if old_value == new_value {
                 continue;
             }
@@ -4554,8 +4615,7 @@ fn run_text_analyzers(
                 warnings,
                 "TEXT_ANALYZE_EXTRACTION_FAILED",
                 &change.path,
-                "required text bytes could not be extracted from one or both archives"
-                    .to_string(),
+                "required text bytes could not be extracted from one or both archives".to_string(),
             );
             add_analyzer_warning(
                 &mut results.analyzer_warnings,
@@ -4576,8 +4636,7 @@ fn run_text_analyzers(
                     warnings,
                     "TEXT_ANALYZE_NOT_TEXT_BYTES",
                     &change.path,
-                    "skipped maybe-text extension because bytes did not look like text"
-                        .to_string(),
+                    "skipped maybe-text extension because bytes did not look like text".to_string(),
                 );
                 add_analyzer_warning(
                     &mut results.analyzer_warnings,
@@ -4591,8 +4650,13 @@ fn run_text_analyzers(
 
         match ext {
             "xml" => {
-                let entry = analyze_xml_content(&change.path, &change.status, clean_bytes, modded_bytes);
-                if entry.warnings.iter().any(|warning| warning_indicates_parse_failure(warning)) {
+                let entry =
+                    analyze_xml_content(&change.path, &change.status, clean_bytes, modded_bytes);
+                if entry
+                    .warnings
+                    .iter()
+                    .any(|warning| warning_indicates_parse_failure(warning))
+                {
                     stats.parseFailures += 1;
                 }
                 push_analysis_entry_warnings(
@@ -4618,8 +4682,13 @@ fn run_text_analyzers(
                 stats.xmlAnalyzed += 1;
             }
             "dat" => {
-                let entry = analyze_dat_content(&change.path, &change.status, clean_bytes, modded_bytes);
-                if entry.warnings.iter().any(|warning| warning_indicates_parse_failure(warning)) {
+                let entry =
+                    analyze_dat_content(&change.path, &change.status, clean_bytes, modded_bytes);
+                if entry
+                    .warnings
+                    .iter()
+                    .any(|warning| warning_indicates_parse_failure(warning))
+                {
                     stats.parseFailures += 1;
                 }
                 push_analysis_entry_warnings(
@@ -4645,8 +4714,13 @@ fn run_text_analyzers(
                 stats.datAnalyzed += 1;
             }
             "meta" => {
-                let entry = analyze_meta_content(&change.path, &change.status, clean_bytes, modded_bytes);
-                if entry.warnings.iter().any(|warning| warning_indicates_parse_failure(warning)) {
+                let entry =
+                    analyze_meta_content(&change.path, &change.status, clean_bytes, modded_bytes);
+                if entry
+                    .warnings
+                    .iter()
+                    .any(|warning| warning_indicates_parse_failure(warning))
+                {
                     stats.parseFailures += 1;
                 }
                 push_analysis_entry_warnings(
@@ -4679,7 +4753,11 @@ fn run_text_analyzers(
                     clean_bytes,
                     modded_bytes,
                 );
-                if entry.warnings.iter().any(|warning| warning_indicates_parse_failure(warning)) {
+                if entry
+                    .warnings
+                    .iter()
+                    .any(|warning| warning_indicates_parse_failure(warning))
+                {
                     stats.parseFailures += 1;
                 }
                 push_analysis_entry_warnings(
@@ -4758,13 +4836,19 @@ fn write_text_analysis_summary(
 
     let mut extension_counts = BTreeMap::new();
     for entry in &results.file_summaries {
-        *extension_counts.entry(entry.extension.clone()).or_insert(0usize) += 1;
+        *extension_counts
+            .entry(entry.extension.clone())
+            .or_insert(0usize) += 1;
     }
     let mut top_extensions: Vec<TopExtension> = extension_counts
         .into_iter()
         .map(|(extension, count)| TopExtension { extension, count })
         .collect();
-    top_extensions.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.extension.cmp(&b.extension)));
+    top_extensions.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| a.extension.cmp(&b.extension))
+    });
     top_extensions.truncate(10);
 
     let summary = TextAnalysisSummaryFile {
@@ -4824,7 +4908,9 @@ fn write_text_diff_entries<T: Serialize>(
         artifactType: artifact_type,
         tool,
         timing,
-        stats: TextDiffStats { total: entries.len() },
+        stats: TextDiffStats {
+            total: entries.len(),
+        },
         entries,
     };
 
@@ -4840,7 +4926,14 @@ fn write_xml_diffs(
     timing: &Timing,
     entries: &[XmlDiffEntry],
 ) -> Result<()> {
-    write_text_diff_entries(out_dir, "xml_diffs.json", "xml_diffs", tool, timing, entries)
+    write_text_diff_entries(
+        out_dir,
+        "xml_diffs.json",
+        "xml_diffs",
+        tool,
+        timing,
+        entries,
+    )
 }
 
 fn write_dat_diffs(
@@ -4849,7 +4942,14 @@ fn write_dat_diffs(
     timing: &Timing,
     entries: &[DatDiffEntry],
 ) -> Result<()> {
-    write_text_diff_entries(out_dir, "dat_diffs.json", "dat_diffs", tool, timing, entries)
+    write_text_diff_entries(
+        out_dir,
+        "dat_diffs.json",
+        "dat_diffs",
+        tool,
+        timing,
+        entries,
+    )
 }
 
 fn write_meta_diffs(
@@ -4858,7 +4958,14 @@ fn write_meta_diffs(
     timing: &Timing,
     entries: &[MetaDiffEntry],
 ) -> Result<()> {
-    write_text_diff_entries(out_dir, "meta_diffs.json", "meta_diffs", tool, timing, entries)
+    write_text_diff_entries(
+        out_dir,
+        "meta_diffs.json",
+        "meta_diffs",
+        tool,
+        timing,
+        entries,
+    )
 }
 
 fn write_generic_text_diffs(
@@ -4901,10 +5008,7 @@ fn write_analyzer_warnings(out_dir: &Path, warnings: &[AnalyzerWarning]) -> Resu
     Ok(())
 }
 
-fn write_ai_readable_change_notes(
-    out_dir: &Path,
-    results: &TextAnalysisResults,
-) -> Result<()> {
+fn write_ai_readable_change_notes(out_dir: &Path, results: &TextAnalysisResults) -> Result<()> {
     let mut summaries = results.file_summaries.clone();
     summaries.sort_by(|a, b| a.path.cmp(&b.path));
 
@@ -4928,6 +5032,1438 @@ fn write_ai_readable_change_notes(
 
     let out = out_dir.join("ai_readable_change_notes.jsonl");
     fs::write(&out, lines.join("\n"))?;
+    Ok(())
+}
+
+// ── Learning Corpus Builder (R0.8) ─────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+struct ComponentFreqEntry {
+    component: String,
+    totalChanged: usize,
+    added: usize,
+    removed: usize,
+    modified: usize,
+    topExtensions: Vec<String>,
+    topPaths: Vec<String>,
+    isKnownComponent: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FileTypeFreqEntry {
+    extension: String,
+    totalChanged: usize,
+    added: usize,
+    removed: usize,
+    modified: usize,
+    knownCount: usize,
+    unknownCount: usize,
+    textCandidateCount: usize,
+    binaryCandidateCount: usize,
+    analyzerStatus: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AnalyzerCoverageReport {
+    totalCandidates: usize,
+    analyzedFiles: usize,
+    skippedFiles: usize,
+    xmlAnalyzed: usize,
+    datAnalyzed: usize,
+    metaAnalyzed: usize,
+    genericAnalyzed: usize,
+    parseFailures: usize,
+    extractionFailures: usize,
+    tooLargeSkipped: usize,
+    binaryPsoSkipped: usize,
+    coveragePercent: f64,
+    note: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CorpusAiChangeNote {
+    kind: String,
+    path: String,
+    extension: String,
+    analyzer: String,
+    summary: CorpusChangeSummary,
+    hypothesis: String,
+    safeForAiPlanning: bool,
+    safeForGeneration: bool,
+    recommendedFutureTool: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CorpusChangeSummary {
+    addedLines: usize,
+    removedLines: usize,
+    numericChanges: usize,
+    colorLikeChanges: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ComponentLesson {
+    component: String,
+    lesson: String,
+    evidence: Vec<String>,
+    confidence: String,
+    safeForGeneration: bool,
+    recommendedNextStep: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FileLesson {
+    path: String,
+    extension: String,
+    analyzer: String,
+    status: String,
+    numericChanges: usize,
+    colorLikeChanges: usize,
+    possibleComponent: String,
+    whyItMatters: String,
+    recommendedFutureTool: String,
+    safeForGeneration: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrainingCandidate {
+    task: String,
+    trainingStatus: String,
+    input: TrainingCandidateInput,
+    expectedOutputStyle: TrainingCandidateExpected,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrainingCandidateInput {
+    path: String,
+    extension: String,
+    analyzerSummary: CorpusChangeSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TrainingCandidateExpected {
+    componentHypothesis: String,
+    risk: String,
+    recommendedTool: String,
+    safeForGeneration: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CorpusIndex {
+    schemaVersion: String,
+    generatedAt: String,
+    scannerVersion: String,
+    baselineArchiveHash: String,
+    baselineArchiveFileName: String,
+    moddedArchiveHash: String,
+    moddedArchiveFileName: String,
+    sourceArtifacts: Vec<String>,
+    totals: CorpusTotals,
+    artifacts: Vec<String>,
+    warning: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CorpusTotals {
+    added: usize,
+    removed: usize,
+    modified: usize,
+    totalUnknown: usize,
+    textCandidates: usize,
+    binaryCandidates: usize,
+    analyzedTextFiles: usize,
+    skippedTextFiles: usize,
+    candidatePatterns: usize,
+}
+
+fn corpus_abs_size_delta(size_delta: i64) -> u64 {
+    size_delta.checked_abs().unwrap_or(i64::MAX) as u64
+}
+
+fn corpus_round_one_decimal(value: f64) -> f64 {
+    (value * 10.0).round() / 10.0
+}
+
+fn corpus_extension_label(ext: &str) -> String {
+    if ext.trim().is_empty() {
+        "(none)".to_string()
+    } else {
+        ext.trim().to_lowercase()
+    }
+}
+
+fn corpus_component_key(component: &str) -> String {
+    let trimmed = component.trim();
+    if trimmed.is_empty() {
+        "unknown".to_string()
+    } else {
+        trimmed.to_lowercase()
+    }
+}
+
+fn corpus_known_component(change: &Change) -> Option<String> {
+    change
+        .components
+        .iter()
+        .map(|component| corpus_component_key(component))
+        .find(|component| component != "unknown")
+}
+
+fn corpus_recommended_future_tool(extension: &str) -> &'static str {
+    match extension {
+        "xml" => "xml_timecycle_editor",
+        "dat" => "dat_config_patcher",
+        "meta" => "meta_editor",
+        "txt" | "ini" | "cfg" | "json" | "nametable" => "text_diff_tool",
+        "ytd" => "ytd_texture_analyzer",
+        "gfx" | "swf" => "gfx_swf_analyzer",
+        "ypt" => "ypt_particle_analyzer",
+        _ => "unknown_analyzer",
+    }
+}
+
+fn corpus_file_type_analyzer_status(extension: &str) -> &'static str {
+    match extension {
+        "xml" | "dat" | "meta" | "txt" | "ini" | "cfg" | "json" | "nametable" => "analyzed",
+        "ymt" | "ymap" | "ytyp" => "skipped_binary",
+        "ytd" | "gfx" | "swf" | "ypt" | "ydr" | "yft" | "ybn" | "awc" | "ysc" | "gxt2" | "ydd"
+        | "yld" | "rel" => "analyzer_required",
+        _ => "unsupported",
+    }
+}
+
+fn corpus_change_hypothesis(
+    path: &str,
+    extension: &str,
+    numeric_changes: usize,
+    color_like_changes: usize,
+) -> String {
+    let normalized = normalize_path(path);
+    if normalized.contains("timecycle") || normalized.contains("cloud") || color_like_changes >= 50
+    {
+        "Likely timecycle/sky visual config. Treat as unconfirmed.".to_string()
+    } else if normalized.contains("visual") {
+        "Likely visual settings config. Treat as unconfirmed.".to_string()
+    } else if normalized.contains("weapon") || normalized.contains("handling") {
+        "Likely gameplay/vehicle config. Treat as unconfirmed.".to_string()
+    } else if extension == "dat" && numeric_changes > 0 {
+        "Likely numeric config values. Treat as unconfirmed.".to_string()
+    } else {
+        "Config/data file with unknown purpose. Treat as unconfirmed.".to_string()
+    }
+}
+
+fn corpus_file_importance_reason(
+    numeric_changes: usize,
+    color_like_changes: usize,
+    size_delta: i64,
+) -> String {
+    if color_like_changes > 50 {
+        "Large color-like edits suggest a visual or timecycle tuning pass that should be reviewed carefully."
+            .to_string()
+    } else if numeric_changes > 50 {
+        "Heavy numeric edits suggest broad tuning changes that may affect gameplay or visuals."
+            .to_string()
+    } else if corpus_abs_size_delta(size_delta) > 100000 {
+        "Large size delta suggests a broad rewrite or asset replacement that deserves manual inspection."
+            .to_string()
+    } else if numeric_changes > 0 || color_like_changes > 0 {
+        "Readable config deltas indicate targeted tuning that can inform future tooling hypotheses."
+            .to_string()
+    } else {
+        "Changed file may influence a Redux component and should be reviewed manually before drawing conclusions."
+            .to_string()
+    }
+}
+
+fn compute_component_frequency(changes: &[Change]) -> Vec<ComponentFreqEntry> {
+    #[derive(Default)]
+    struct ComponentAgg {
+        total_changed: usize,
+        added: usize,
+        removed: usize,
+        modified: usize,
+        ext_counts: BTreeMap<String, usize>,
+        path_counts: BTreeMap<String, usize>,
+        is_known_component: bool,
+    }
+
+    let mut groups: BTreeMap<String, ComponentAgg> = BTreeMap::new();
+
+    for change in changes {
+        let mut saw_unknown = false;
+        let mut saw_known = false;
+
+        for component in &change.components {
+            let key = corpus_component_key(component);
+            if key == "unknown" {
+                saw_unknown = true;
+                continue;
+            }
+            saw_known = true;
+            let entry = groups.entry(key).or_default();
+            entry.total_changed += 1;
+            match change.status.as_str() {
+                "added" => entry.added += 1,
+                "removed" => entry.removed += 1,
+                _ => entry.modified += 1,
+            }
+            *entry
+                .ext_counts
+                .entry(corpus_extension_label(&change.extension))
+                .or_insert(0usize) += 1;
+            *entry
+                .path_counts
+                .entry(normalize_path(&change.path))
+                .or_insert(0usize) += 1;
+            entry.is_known_component = true;
+        }
+
+        if saw_unknown || !saw_known {
+            let entry = groups.entry("unknown".to_string()).or_default();
+            entry.total_changed += 1;
+            match change.status.as_str() {
+                "added" => entry.added += 1,
+                "removed" => entry.removed += 1,
+                _ => entry.modified += 1,
+            }
+            *entry
+                .ext_counts
+                .entry(corpus_extension_label(&change.extension))
+                .or_insert(0usize) += 1;
+            *entry
+                .path_counts
+                .entry(normalize_path(&change.path))
+                .or_insert(0usize) += 1;
+        }
+    }
+
+    let mut entries: Vec<ComponentFreqEntry> = groups
+        .into_iter()
+        .map(|(component, agg)| {
+            let mut top_extensions: Vec<(String, usize)> = agg.ext_counts.into_iter().collect();
+            top_extensions.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            let mut top_paths: Vec<(String, usize)> = agg.path_counts.into_iter().collect();
+            top_paths.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            ComponentFreqEntry {
+                component: component.clone(),
+                totalChanged: agg.total_changed,
+                added: agg.added,
+                removed: agg.removed,
+                modified: agg.modified,
+                topExtensions: top_extensions
+                    .into_iter()
+                    .take(5)
+                    .map(|(extension, _)| extension)
+                    .collect(),
+                topPaths: top_paths
+                    .into_iter()
+                    .take(5)
+                    .map(|(path, _)| path)
+                    .collect(),
+                isKnownComponent: component != "unknown" && agg.is_known_component,
+            }
+        })
+        .collect();
+
+    entries.sort_by(|a, b| {
+        b.totalChanged
+            .cmp(&a.totalChanged)
+            .then_with(|| a.component.cmp(&b.component))
+    });
+    entries.truncate(50);
+    entries
+}
+
+fn compute_file_type_frequency(
+    changes: &[Change],
+    unknown_entries: &[UnknownEntry],
+) -> Vec<FileTypeFreqEntry> {
+    #[derive(Default)]
+    struct FileTypeAgg {
+        total_changed: usize,
+        added: usize,
+        removed: usize,
+        modified: usize,
+        known_count: usize,
+        unknown_count: usize,
+        text_candidate_count: usize,
+        binary_candidate_count: usize,
+    }
+
+    let unknown_paths: BTreeSet<String> = unknown_entries
+        .iter()
+        .map(|entry| normalize_path(&entry.path))
+        .collect();
+    let mut groups: BTreeMap<String, FileTypeAgg> = BTreeMap::new();
+
+    for change in changes {
+        let extension = corpus_extension_label(&change.extension);
+        let entry = groups.entry(extension.clone()).or_default();
+        entry.total_changed += 1;
+        match change.status.as_str() {
+            "added" => entry.added += 1,
+            "removed" => entry.removed += 1,
+            _ => entry.modified += 1,
+        }
+
+        let is_unknown = unknown_paths.contains(&normalize_path(&change.path))
+            || change
+                .components
+                .iter()
+                .all(|component| corpus_component_key(component) == "unknown");
+        if is_unknown {
+            entry.unknown_count += 1;
+        } else {
+            entry.known_count += 1;
+        }
+
+        if is_text_candidate_ext(&extension) {
+            entry.text_candidate_count += 1;
+        } else {
+            entry.binary_candidate_count += 1;
+        }
+    }
+
+    let mut entries: Vec<FileTypeFreqEntry> = groups
+        .into_iter()
+        .map(|(extension, agg)| FileTypeFreqEntry {
+            analyzerStatus: corpus_file_type_analyzer_status(&extension).to_string(),
+            extension,
+            totalChanged: agg.total_changed,
+            added: agg.added,
+            removed: agg.removed,
+            modified: agg.modified,
+            knownCount: agg.known_count,
+            unknownCount: agg.unknown_count,
+            textCandidateCount: agg.text_candidate_count,
+            binaryCandidateCount: agg.binary_candidate_count,
+        })
+        .collect();
+
+    entries.sort_by(|a, b| {
+        b.totalChanged
+            .cmp(&a.totalChanged)
+            .then_with(|| a.extension.cmp(&b.extension))
+    });
+    entries.truncate(50);
+    entries
+}
+
+fn build_corpus_ai_change_notes(text_results: &TextAnalysisResults) -> Vec<CorpusAiChangeNote> {
+    let mut notes: Vec<CorpusAiChangeNote> = text_results
+        .file_summaries
+        .iter()
+        .map(|entry| CorpusAiChangeNote {
+            kind: "analyzed_text_change".to_string(),
+            path: entry.path.clone(),
+            extension: entry.extension.clone(),
+            analyzer: entry.analyzer.clone(),
+            summary: CorpusChangeSummary {
+                addedLines: entry.addedLines,
+                removedLines: entry.removedLines,
+                numericChanges: entry.numericChanges,
+                colorLikeChanges: entry.colorLikeChanges,
+            },
+            hypothesis: corpus_change_hypothesis(
+                &entry.path,
+                &entry.extension,
+                entry.numericChanges,
+                entry.colorLikeChanges,
+            ),
+            safeForAiPlanning: true,
+            safeForGeneration: false,
+            recommendedFutureTool: corpus_recommended_future_tool(&entry.extension).to_string(),
+        })
+        .collect();
+
+    notes.sort_by(|a, b| a.path.cmp(&b.path));
+    notes
+}
+
+fn build_corpus_ai_change_notes_from_opt(
+    text_results: Option<&TextAnalysisResults>,
+) -> Vec<CorpusAiChangeNote> {
+    match text_results {
+        Some(results) => build_corpus_ai_change_notes(results),
+        None => Vec::new(),
+    }
+}
+
+fn build_component_lessons(
+    freq_entries: &[ComponentFreqEntry],
+    changes: &[Change],
+) -> Vec<ComponentLesson> {
+    let mut lessons = Vec::new();
+
+    for entry in freq_entries.iter().filter(|entry| entry.totalChanged > 0) {
+        let matching_changes = changes
+            .iter()
+            .filter(|change| {
+                if entry.component == "unknown" {
+                    change
+                        .components
+                        .iter()
+                        .all(|component| corpus_component_key(component) == "unknown")
+                } else {
+                    change
+                        .components
+                        .iter()
+                        .any(|component| corpus_component_key(component) == entry.component)
+                }
+            })
+            .count();
+
+        let confidence =
+            if entry.component != "unknown" && entry.totalChanged >= 2 && matching_changes >= 2 {
+                "medium"
+            } else {
+                "low"
+            };
+
+        let top_extension = entry
+            .topExtensions
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "(none)".to_string());
+        let top_paths = if entry.topPaths.is_empty() {
+            "none".to_string()
+        } else {
+            entry
+                .topPaths
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let lesson = if entry.component == "unknown" {
+            format!(
+                "Unknown changes likely cluster around {} file(s), mainly {}. Treat this only as a candidate grouping until a dedicated analyzer confirms it.",
+                entry.totalChanged, top_extension
+            )
+        } else {
+            format!(
+                "{} likely represents a candidate component cluster with {} changed file(s), mainly {}. Treat this as cautious evidence rather than ground truth.",
+                entry.component, entry.totalChanged, top_extension
+            )
+        };
+
+        let evidence = vec![
+            format!(
+                "counts: total={}, added={}, removed={}, modified={}",
+                entry.totalChanged, entry.added, entry.removed, entry.modified
+            ),
+            format!("top extensions: {}", entry.topExtensions.join(", ")),
+            format!("sample paths: {}", top_paths),
+        ];
+
+        lessons.push(ComponentLesson {
+            component: entry.component.clone(),
+            lesson,
+            evidence,
+            confidence: confidence.to_string(),
+            safeForGeneration: false,
+            recommendedNextStep: corpus_recommended_future_tool(&top_extension).to_string(),
+        });
+    }
+
+    lessons.sort_by(|a, b| a.component.cmp(&b.component));
+    lessons
+}
+
+fn build_file_lessons(
+    changes: &[Change],
+    text_results: Option<&TextAnalysisResults>,
+) -> Vec<FileLesson> {
+    let change_by_path: BTreeMap<String, &Change> = changes
+        .iter()
+        .map(|change| (normalize_path(&change.path), change))
+        .collect();
+    let mut scored_lessons: Vec<(FileLesson, usize, usize, u64)> = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    if let Some(results) = text_results {
+        let mut summaries: Vec<&TextAnalysisFileSummary> = results.file_summaries.iter().collect();
+        summaries.sort_by(|a, b| {
+            b.numericChanges
+                .cmp(&a.numericChanges)
+                .then_with(|| b.colorLikeChanges.cmp(&a.colorLikeChanges))
+                .then_with(|| {
+                    corpus_abs_size_delta(b.sizeDelta).cmp(&corpus_abs_size_delta(a.sizeDelta))
+                })
+                .then_with(|| a.path.cmp(&b.path))
+        });
+
+        for summary in summaries.iter().copied() {
+            let impact_size = corpus_abs_size_delta(summary.sizeDelta);
+            if summary.numericChanges <= 50
+                && summary.colorLikeChanges <= 50
+                && impact_size <= 100000
+            {
+                continue;
+            }
+            let normalized = normalize_path(&summary.path);
+            if !seen.insert(normalized.clone()) {
+                continue;
+            }
+            let possible_component = change_by_path
+                .get(&normalized)
+                .and_then(|change| corpus_known_component(change))
+                .unwrap_or_else(|| "unknown".to_string());
+            scored_lessons.push((
+                FileLesson {
+                    path: summary.path.clone(),
+                    extension: summary.extension.clone(),
+                    analyzer: summary.analyzer.clone(),
+                    status: summary.status.clone(),
+                    numericChanges: summary.numericChanges,
+                    colorLikeChanges: summary.colorLikeChanges,
+                    possibleComponent: possible_component,
+                    whyItMatters: corpus_file_importance_reason(
+                        summary.numericChanges,
+                        summary.colorLikeChanges,
+                        summary.sizeDelta,
+                    ),
+                    recommendedFutureTool: corpus_recommended_future_tool(&summary.extension)
+                        .to_string(),
+                    safeForGeneration: false,
+                },
+                summary.numericChanges,
+                summary.colorLikeChanges,
+                impact_size,
+            ));
+        }
+
+        for summary in summaries.iter().copied() {
+            if scored_lessons.len() >= 10 {
+                break;
+            }
+            let normalized = normalize_path(&summary.path);
+            if !seen.insert(normalized.clone()) {
+                continue;
+            }
+            let impact_size = corpus_abs_size_delta(summary.sizeDelta);
+            if summary.numericChanges == 0 && summary.colorLikeChanges == 0 && impact_size == 0 {
+                continue;
+            }
+            let possible_component = change_by_path
+                .get(&normalized)
+                .and_then(|change| corpus_known_component(change))
+                .unwrap_or_else(|| "unknown".to_string());
+            scored_lessons.push((
+                FileLesson {
+                    path: summary.path.clone(),
+                    extension: summary.extension.clone(),
+                    analyzer: summary.analyzer.clone(),
+                    status: summary.status.clone(),
+                    numericChanges: summary.numericChanges,
+                    colorLikeChanges: summary.colorLikeChanges,
+                    possibleComponent: possible_component,
+                    whyItMatters: corpus_file_importance_reason(
+                        summary.numericChanges,
+                        summary.colorLikeChanges,
+                        summary.sizeDelta,
+                    ),
+                    recommendedFutureTool: corpus_recommended_future_tool(&summary.extension)
+                        .to_string(),
+                    safeForGeneration: false,
+                },
+                summary.numericChanges,
+                summary.colorLikeChanges,
+                impact_size,
+            ));
+        }
+    }
+
+    let mut sorted_changes: Vec<&Change> = changes.iter().collect();
+    sorted_changes.sort_by(|a, b| {
+        corpus_abs_size_delta(b.sizeDelta)
+            .cmp(&corpus_abs_size_delta(a.sizeDelta))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+
+    for change in sorted_changes {
+        if scored_lessons.len() >= 25 {
+            break;
+        }
+        let impact_size = corpus_abs_size_delta(change.sizeDelta);
+        if impact_size <= 100000 && !scored_lessons.is_empty() {
+            continue;
+        }
+        let normalized = normalize_path(&change.path);
+        if !seen.insert(normalized) {
+            continue;
+        }
+        scored_lessons.push((
+            FileLesson {
+                path: change.path.clone(),
+                extension: change.extension.clone(),
+                analyzer: if is_text_candidate_ext(&change.extension) {
+                    "text_change_candidate".to_string()
+                } else {
+                    "binary_change_candidate".to_string()
+                },
+                status: change.status.clone(),
+                numericChanges: 0,
+                colorLikeChanges: 0,
+                possibleComponent: corpus_known_component(change)
+                    .unwrap_or_else(|| "unknown".to_string()),
+                whyItMatters: corpus_file_importance_reason(0, 0, change.sizeDelta),
+                recommendedFutureTool: corpus_recommended_future_tool(&change.extension)
+                    .to_string(),
+                safeForGeneration: false,
+            },
+            0,
+            0,
+            impact_size,
+        ));
+    }
+
+    scored_lessons.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| b.2.cmp(&a.2))
+            .then_with(|| b.3.cmp(&a.3))
+            .then_with(|| a.0.path.cmp(&b.0.path))
+    });
+
+    scored_lessons
+        .into_iter()
+        .map(|(lesson, _, _, _)| lesson)
+        .collect()
+}
+
+fn build_training_candidates(
+    text_results: Option<&TextAnalysisResults>,
+    changes: &[Change],
+) -> Vec<TrainingCandidate> {
+    let Some(results) = text_results else {
+        return Vec::new();
+    };
+
+    let change_by_path: BTreeMap<String, &Change> = changes
+        .iter()
+        .map(|change| (normalize_path(&change.path), change))
+        .collect();
+    let mut summaries: Vec<&TextAnalysisFileSummary> = results
+        .file_summaries
+        .iter()
+        .filter(|summary| summary.numericChanges > 0 || summary.colorLikeChanges > 0)
+        .collect();
+    summaries.sort_by(|a, b| {
+        b.numericChanges
+            .cmp(&a.numericChanges)
+            .then_with(|| b.colorLikeChanges.cmp(&a.colorLikeChanges))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+
+    let mut candidates = Vec::new();
+    for summary in summaries.into_iter().take(500) {
+        let risk = change_by_path
+            .get(&normalize_path(&summary.path))
+            .map(|change| change.risk.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        candidates.push(TrainingCandidate {
+            task: "explain_redux_file_change".to_string(),
+            trainingStatus: "candidate_unreviewed".to_string(),
+            input: TrainingCandidateInput {
+                path: summary.path.clone(),
+                extension: summary.extension.clone(),
+                analyzerSummary: CorpusChangeSummary {
+                    addedLines: summary.addedLines,
+                    removedLines: summary.removedLines,
+                    numericChanges: summary.numericChanges,
+                    colorLikeChanges: summary.colorLikeChanges,
+                },
+            },
+            expectedOutputStyle: TrainingCandidateExpected {
+                componentHypothesis: "unknown - review required".to_string(),
+                risk,
+                recommendedTool: corpus_recommended_future_tool(&summary.extension).to_string(),
+                safeForGeneration: false,
+            },
+        });
+    }
+
+    candidates
+}
+
+fn render_local_ai_context(
+    changes: &[Change],
+    unknown_entries: &[UnknownEntry],
+    text_results: Option<&TextAnalysisResults>,
+    freq_entries: &[ComponentFreqEntry],
+    baseline_meta: &BaselineMetadataFile,
+    pattern_count: usize,
+    generated_at: &str,
+) -> String {
+    let added = changes
+        .iter()
+        .filter(|change| change.status == "added")
+        .count();
+    let removed = changes
+        .iter()
+        .filter(|change| change.status == "removed")
+        .count();
+    let modified = changes
+        .iter()
+        .filter(|change| change.status == "modified")
+        .count();
+    let text_candidates = unknown_entries
+        .iter()
+        .filter(|entry| is_text_candidate_ext(&entry.extension))
+        .count();
+    let binary_candidates = unknown_entries.len().saturating_sub(text_candidates);
+    let coverage = text_results.map(|results| {
+        let percent = if results.stats.totalCandidates > 0 {
+            corpus_round_one_decimal(
+                (results.stats.analyzedFiles as f64 / results.stats.totalCandidates as f64) * 100.0,
+            )
+        } else {
+            0.0
+        };
+        format!(
+            "- analyzed: {} / {} ({:.1}%)\n- xml/dat/meta/generic: {}/{}/{}/{}\n- parse failures: {}\n- extraction failures: {}\n- too large skipped: {}\n- skipped non-text bytes: {}",
+            results.stats.analyzedFiles,
+            results.stats.totalCandidates,
+            percent,
+            results.stats.xmlAnalyzed,
+            results.stats.datAnalyzed,
+            results.stats.metaAnalyzed,
+            results.stats.genericTextAnalyzed,
+            results.stats.parseFailures,
+            results.stats.extractionFailures,
+            results.stats.tooLargeSkipped,
+            results.stats.skippedNotTextBytes,
+        )
+    });
+
+    let mut known_components: Vec<&ComponentFreqEntry> = freq_entries
+        .iter()
+        .filter(|entry| entry.isKnownComponent)
+        .collect();
+    known_components.sort_by(|a, b| {
+        b.totalChanged
+            .cmp(&a.totalChanged)
+            .then_with(|| a.component.cmp(&b.component))
+    });
+
+    let mut readable_lines = Vec::new();
+    if let Some(results) = text_results {
+        let mut files: Vec<&TextAnalysisFileSummary> = results.file_summaries.iter().collect();
+        files.sort_by(|a, b| {
+            b.numericChanges
+                .cmp(&a.numericChanges)
+                .then_with(|| b.colorLikeChanges.cmp(&a.colorLikeChanges))
+                .then_with(|| {
+                    corpus_abs_size_delta(b.sizeDelta).cmp(&corpus_abs_size_delta(a.sizeDelta))
+                })
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        for file in files.into_iter().take(10) {
+            readable_lines.push(format!(
+                "- `{}` [{}] numeric={}, color={}, sizeDelta={}",
+                file.path,
+                file.analyzer,
+                file.numericChanges,
+                file.colorLikeChanges,
+                file.sizeDelta
+            ));
+        }
+    }
+    if readable_lines.is_empty() {
+        let mut text_changes: Vec<&Change> = changes
+            .iter()
+            .filter(|change| is_text_candidate_ext(&change.extension))
+            .collect();
+        text_changes.sort_by(|a, b| {
+            corpus_abs_size_delta(b.sizeDelta)
+                .cmp(&corpus_abs_size_delta(a.sizeDelta))
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        for change in text_changes.into_iter().take(10) {
+            readable_lines.push(format!(
+                "- `{}` [{}] sizeDelta={}",
+                change.path, change.extension, change.sizeDelta
+            ));
+        }
+    }
+    if readable_lines.is_empty() {
+        readable_lines.push("- No readable text/config deltas were available.".to_string());
+    }
+
+    let known_component_lines = if known_components.is_empty() {
+        "- No known component groups were identified.".to_string()
+    } else {
+        known_components
+            .into_iter()
+            .take(10)
+            .map(|entry| {
+                format!(
+                    "- {}: {} changed file(s)",
+                    entry.component, entry.totalChanged
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        "# Local AI Context — Redux vs Clean Diff\n\n## What was compared\n- baseline archive: {} ({})\n- modded archive: unknown (see learning_corpus_index.json for identity metadata)\n- generated at: {}\n\n## High-level totals\n- added: {}\n- removed: {}\n- modified: {}\n- unknown changes total: {}\n\n## Known components changed\n{}\n\n## Unknown patterns\n- total unknown entries: {}\n- text candidates: {}\n- binary candidates: {}\n- candidate patterns count: {}\n\n## Analyzer coverage\n{}\n\n## Key readable files changed (top 10 by impact)\n{}\n\n## What is safe to reason about\n- File-level changes and component assignments are safe to analyze.\n- Numeric/color-like changes in XML/DAT/META are hypotheses only.\n- Frequency trends can guide future analyzer work.\n\n## What is NOT safe to generate yet\n- Do not generate RPF patches based on this corpus alone.\n- Binary formats (YTD, GFX, YPT, YMT, YMAP) require future analyzers.\n- Verify all AI hypotheses against the actual game data.\n\n## Binary formats requiring future analyzers\n- ytd\n- gfx\n- ypt\n- ymt\n- ymap\n- ytyp\n- ybn\n- ydr\n- yft\n- awc\n- ysc\n- gxt2\n",
+        baseline_meta.baselineArchiveFileName,
+        baseline_meta.baselineArchiveHash,
+        generated_at,
+        added,
+        removed,
+        modified,
+        unknown_entries.len(),
+        known_component_lines,
+        unknown_entries.len(),
+        text_candidates,
+        binary_candidates,
+        pattern_count,
+        coverage.unwrap_or_else(|| "text analysis not run".to_string()),
+        readable_lines.join("\n"),
+    )
+}
+
+fn render_redux_making_atlas(
+    changes: &[Change],
+    unknown_entries: &[UnknownEntry],
+    text_results: Option<&TextAnalysisResults>,
+    freq_entries: &[ComponentFreqEntry],
+    file_lessons: &[FileLesson],
+    component_lessons: &[ComponentLesson],
+    pattern_count: usize,
+    generated_at: &str,
+) -> String {
+    let added = changes
+        .iter()
+        .filter(|change| change.status == "added")
+        .count();
+    let removed = changes
+        .iter()
+        .filter(|change| change.status == "removed")
+        .count();
+    let modified = changes
+        .iter()
+        .filter(|change| change.status == "modified")
+        .count();
+
+    let mut known_components: Vec<&ComponentFreqEntry> = freq_entries
+        .iter()
+        .filter(|entry| entry.isKnownComponent)
+        .collect();
+    known_components.sort_by(|a, b| {
+        b.totalChanged
+            .cmp(&a.totalChanged)
+            .then_with(|| a.component.cmp(&b.component))
+    });
+
+    let component_rows = if known_components.is_empty() {
+        "| Component | Files Changed | Extensions | Status |\n| --- | ---: | --- | --- |\n| none | 0 | - | no known component mapping |"
+            .to_string()
+    } else {
+        let mut rows = vec![
+            "| Component | Files Changed | Extensions | Status |".to_string(),
+            "| --- | ---: | --- | --- |".to_string(),
+        ];
+        for entry in known_components.into_iter().take(15) {
+            rows.push(format!(
+                "| {} | {} | {} | {} |",
+                entry.component,
+                entry.totalChanged,
+                entry.topExtensions.join(", "),
+                if entry.isKnownComponent {
+                    "known-from-diff"
+                } else {
+                    "candidate"
+                }
+            ));
+        }
+        rows.join("\n")
+    };
+
+    let mut unknown_extension_counts = BTreeMap::new();
+    let mut unknown_folder_counts = BTreeMap::new();
+    for entry in unknown_entries {
+        *unknown_extension_counts
+            .entry(corpus_extension_label(&entry.extension))
+            .or_insert(0usize) += 1;
+        if let Some(folder) = top_level_folder(&entry.path) {
+            *unknown_folder_counts.entry(folder).or_insert(0usize) += 1;
+        }
+    }
+    let mut top_unknown_extensions: Vec<(String, usize)> =
+        unknown_extension_counts.into_iter().collect();
+    top_unknown_extensions.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let mut top_unknown_folders: Vec<(String, usize)> = unknown_folder_counts.into_iter().collect();
+    top_unknown_folders.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    let readable_summary = match text_results {
+        Some(results) => {
+            let mut files: Vec<&TextAnalysisFileSummary> = results.file_summaries.iter().collect();
+            files.sort_by(|a, b| {
+                b.numericChanges
+                    .cmp(&a.numericChanges)
+                    .then_with(|| b.colorLikeChanges.cmp(&a.colorLikeChanges))
+                    .then_with(|| a.path.cmp(&b.path))
+            });
+            let highlights = if files.is_empty() {
+                "- No readable text/config files were analyzed.".to_string()
+            } else {
+                files
+                    .into_iter()
+                    .take(5)
+                    .map(|file| {
+                        format!(
+                            "- `{}` [{}] numeric={}, color={}",
+                            file.path, file.analyzer, file.numericChanges, file.colorLikeChanges
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            format!(
+                "- XML analyzed: {}\n- DAT analyzed: {}\n- META analyzed: {}\n- Generic analyzed: {}\n{}",
+                results.stats.xmlAnalyzed,
+                results.stats.datAnalyzed,
+                results.stats.metaAnalyzed,
+                results.stats.genericTextAnalyzed,
+                highlights,
+            )
+        }
+        None => "- text analysis not run".to_string(),
+    };
+
+    let mut binary_extension_counts = BTreeMap::new();
+    for entry in unknown_entries
+        .iter()
+        .filter(|entry| entry.analyzerRequired || !is_text_candidate_ext(&entry.extension))
+    {
+        *binary_extension_counts
+            .entry(corpus_extension_label(&entry.extension))
+            .or_insert(0usize) += 1;
+    }
+    let mut binary_extensions: Vec<(String, usize)> = binary_extension_counts.into_iter().collect();
+    binary_extensions.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let binary_lines = if binary_extensions.is_empty() {
+        "- none".to_string()
+    } else {
+        binary_extensions
+            .into_iter()
+            .take(5)
+            .map(|(extension, count)| format!("- {}: {} file(s)", extension, count))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let important_files = if file_lessons.is_empty() {
+        "- none".to_string()
+    } else {
+        file_lessons
+            .iter()
+            .take(10)
+            .map(|lesson| {
+                format!(
+                    "- `{}` [{}] component={} tool={}",
+                    lesson.path,
+                    lesson.analyzer,
+                    lesson.possibleComponent,
+                    lesson.recommendedFutureTool
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let component_lesson_lines = if component_lessons.is_empty() {
+        "- No component lessons yet.".to_string()
+    } else {
+        component_lessons
+            .iter()
+            .take(5)
+            .map(|lesson| format!("- {} ({})", lesson.component, lesson.confidence))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    format!(
+        "# Redux Making Atlas — Candidate Component Map\n\n## Overview\n- generated at: {}\n- total changed files: {}\n- added/removed/modified: {}/{}/{}\n- unknown candidate files: {}\n- component lesson count: {}\n\n## Known Component Changes (from diff)\n{}\n\n## Unknown Candidate Patterns\n- Count: {}\n- Top extensions: {}\n- Top folders: {}\n- Candidate patterns: {}\n\n## Readable Config/Text Changes\n{}\n\n## Binary Analyzer-Required Changes\n{}\n\n## Important Files to Investigate\n{}\n\n## Future Tool Recommendations\n- xml_timecycle_editor\n- dat_config_patcher\n- meta_editor\n- ytd_texture_analyzer\n- gfx_swf_analyzer\n\n## What an AI Can Safely Infer\n- Which files changed and how often a component label appeared.\n- Which readable config files had heavy numeric or color-like edits.\n- Which binary extensions need dedicated analyzers next.\n{}\n\n## What an AI Must NOT Generate Yet\n- Direct RPF patch payloads.\n- Final gameplay or visual claims without manual validation.\n- Binary asset rewrites for YTD/GFX/YPT/YMAP/YTYP/YDR/YFT.\n\nGenerated by Redux Scanner Engine — local only, do not commit if derived from real game files\n",
+        generated_at,
+        changes.len(),
+        added,
+        removed,
+        modified,
+        unknown_entries.len(),
+        component_lessons.len(),
+        component_rows,
+        unknown_entries.len(),
+        if top_unknown_extensions.is_empty() {
+            "none".to_string()
+        } else {
+            top_unknown_extensions
+                .into_iter()
+                .take(5)
+                .map(|(extension, count)| format!("{} ({})", extension, count))
+                .collect::<Vec<_>>()
+                .join(", ")
+        },
+        if top_unknown_folders.is_empty() {
+            "none".to_string()
+        } else {
+            top_unknown_folders
+                .into_iter()
+                .take(5)
+                .map(|(folder, count)| format!("{} ({})", folder, count))
+                .collect::<Vec<_>>()
+                .join(", ")
+        },
+        pattern_count,
+        readable_summary,
+        binary_lines,
+        important_files,
+        component_lesson_lines,
+    )
+}
+
+fn write_corpus_index(
+    corpus_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    totals: &CorpusTotals,
+    baseline_meta: &BaselineMetadataFile,
+    modded_hash: &str,
+    modded_filename: &str,
+    artifact_names: &[&str],
+) -> Result<()> {
+    let index = CorpusIndex {
+        schemaVersion: SCHEMA_VERSION.to_string(),
+        generatedAt: timing.finishedAt.clone(),
+        scannerVersion: tool.version.clone(),
+        baselineArchiveHash: baseline_meta.baselineArchiveHash.clone(),
+        baselineArchiveFileName: baseline_meta.baselineArchiveFileName.clone(),
+        moddedArchiveHash: modded_hash.to_string(),
+        moddedArchiveFileName: modded_filename.to_string(),
+        sourceArtifacts: vec![
+            "clean_vs_modded_diff.json".to_string(),
+            "diff_summary.json".to_string(),
+            "unknown_changes.json".to_string(),
+            "candidate_patterns.json".to_string(),
+            "text_analysis_summary.json".to_string(),
+        ],
+        totals: totals.clone(),
+        artifacts: artifact_names
+            .iter()
+            .map(|name| format!("learning_corpus/{}", name))
+            .collect(),
+        warning: "local-only corpus; treat all hypotheses as unreviewed and do not generate game patches from this data alone"
+            .to_string(),
+    };
+
+    let out = corpus_dir.join("learning_corpus_index.json");
+    let json = serde_json::to_string_pretty(&index)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_component_frequency(
+    corpus_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    entries: &[ComponentFreqEntry],
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct ComponentFrequencyFile<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        total: usize,
+        entries: &'a [ComponentFreqEntry],
+    }
+
+    let report = ComponentFrequencyFile {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "component_frequency",
+        tool,
+        timing,
+        total: entries.len(),
+        entries,
+    };
+
+    let out = corpus_dir.join("component_frequency.json");
+    let json = serde_json::to_string_pretty(&report)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_file_type_frequency(
+    corpus_dir: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    entries: &[FileTypeFreqEntry],
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct FileTypeFrequencyFile<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        total: usize,
+        entries: &'a [FileTypeFreqEntry],
+    }
+
+    let report = FileTypeFrequencyFile {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "file_type_frequency",
+        tool,
+        timing,
+        total: entries.len(),
+        entries,
+    };
+
+    let out = corpus_dir.join("file_type_frequency.json");
+    let json = serde_json::to_string_pretty(&report)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_analyzer_coverage(corpus_dir: &Path, report: &AnalyzerCoverageReport) -> Result<()> {
+    #[derive(Serialize)]
+    struct AnalyzerCoverageFile<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        report: &'a AnalyzerCoverageReport,
+    }
+
+    let wrapped = AnalyzerCoverageFile {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "analyzer_coverage",
+        report,
+    };
+
+    let out = corpus_dir.join("analyzer_coverage.json");
+    let json = serde_json::to_string_pretty(&wrapped)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_corpus_ai_change_notes(corpus_dir: &Path, notes: &[CorpusAiChangeNote]) -> Result<()> {
+    let mut lines = String::new();
+    for note in notes {
+        lines.push_str(&serde_json::to_string(note)?);
+        lines.push('\n');
+    }
+    fs::write(corpus_dir.join("corpus_ai_change_notes.jsonl"), lines)?;
+    Ok(())
+}
+
+fn write_corpus_component_lessons(corpus_dir: &Path, lessons: &[ComponentLesson]) -> Result<()> {
+    let mut lines = String::new();
+    for lesson in lessons {
+        lines.push_str(&serde_json::to_string(lesson)?);
+        lines.push('\n');
+    }
+    fs::write(corpus_dir.join("component_lessons.jsonl"), lines)?;
+    Ok(())
+}
+
+fn write_corpus_file_lessons(corpus_dir: &Path, lessons: &[FileLesson]) -> Result<()> {
+    let mut lines = String::new();
+    for lesson in lessons {
+        lines.push_str(&serde_json::to_string(lesson)?);
+        lines.push('\n');
+    }
+    fs::write(corpus_dir.join("file_lessons.jsonl"), lines)?;
+    Ok(())
+}
+
+fn write_training_candidates(corpus_dir: &Path, candidates: &[TrainingCandidate]) -> Result<()> {
+    let mut lines = String::new();
+    for candidate in candidates {
+        lines.push_str(&serde_json::to_string(candidate)?);
+        lines.push('\n');
+    }
+    fs::write(corpus_dir.join("training_candidates.jsonl"), lines)?;
+    Ok(())
+}
+
+fn write_local_ai_context(corpus_dir: &Path, content: &str) -> Result<()> {
+    fs::write(corpus_dir.join("local_ai_context.md"), content)?;
+    Ok(())
+}
+
+fn write_redux_making_atlas(corpus_dir: &Path, content: &str) -> Result<()> {
+    fs::write(corpus_dir.join("redux_making_atlas.md"), content)?;
+    Ok(())
+}
+
+fn build_and_write_learning_corpus(
+    out_dir: &Path,
+    changes: &[Change],
+    unknown_entries: &[UnknownEntry],
+    text_results: Option<&TextAnalysisResults>,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    baseline_meta: &BaselineMetadataFile,
+    modded_hash: &str,
+    modded_filename: &str,
+    pattern_count: usize,
+    generated_at: &str,
+) -> Result<()> {
+    let corpus_dir = out_dir.join("learning_corpus");
+    fs::create_dir_all(&corpus_dir)?;
+
+    let component_freq = compute_component_frequency(changes);
+    let file_type_freq = compute_file_type_frequency(changes, unknown_entries);
+    let analyzer_coverage = match text_results {
+        Some(results) => {
+            let coverage_percent = if results.stats.totalCandidates > 0 {
+                corpus_round_one_decimal(
+                    (results.stats.analyzedFiles as f64 / results.stats.totalCandidates as f64)
+                        * 100.0,
+                )
+            } else {
+                0.0
+            };
+            AnalyzerCoverageReport {
+                totalCandidates: results.stats.totalCandidates,
+                analyzedFiles: results.stats.analyzedFiles,
+                skippedFiles: results.stats.skippedFiles,
+                xmlAnalyzed: results.stats.xmlAnalyzed,
+                datAnalyzed: results.stats.datAnalyzed,
+                metaAnalyzed: results.stats.metaAnalyzed,
+                genericAnalyzed: results.stats.genericTextAnalyzed,
+                parseFailures: results.stats.parseFailures,
+                extractionFailures: results.stats.extractionFailures,
+                tooLargeSkipped: results.stats.tooLargeSkipped,
+                binaryPsoSkipped: results.stats.skippedNotTextBytes,
+                coveragePercent: coverage_percent,
+                note: "Coverage reflects current readable text analyzers only; binary analyzers are still future work."
+                    .to_string(),
+            }
+        }
+        None => AnalyzerCoverageReport {
+            totalCandidates: 0,
+            analyzedFiles: 0,
+            skippedFiles: 0,
+            xmlAnalyzed: 0,
+            datAnalyzed: 0,
+            metaAnalyzed: 0,
+            genericAnalyzed: 0,
+            parseFailures: 0,
+            extractionFailures: 0,
+            tooLargeSkipped: 0,
+            binaryPsoSkipped: 0,
+            coveragePercent: 0.0,
+            note: "Text analysis was not run, so coverage is zero.".to_string(),
+        },
+    };
+    let corpus_ai_notes = build_corpus_ai_change_notes_from_opt(text_results);
+    let component_lessons = build_component_lessons(&component_freq, changes);
+    let file_lessons = build_file_lessons(changes, text_results);
+    let training_candidates = build_training_candidates(text_results, changes);
+    let totals = CorpusTotals {
+        added: changes
+            .iter()
+            .filter(|change| change.status == "added")
+            .count(),
+        removed: changes
+            .iter()
+            .filter(|change| change.status == "removed")
+            .count(),
+        modified: changes
+            .iter()
+            .filter(|change| change.status == "modified")
+            .count(),
+        totalUnknown: unknown_entries.len(),
+        textCandidates: unknown_entries
+            .iter()
+            .filter(|entry| is_text_candidate_ext(&entry.extension))
+            .count(),
+        binaryCandidates: unknown_entries
+            .iter()
+            .filter(|entry| !is_text_candidate_ext(&entry.extension))
+            .count(),
+        analyzedTextFiles: text_results
+            .map(|results| results.stats.analyzedFiles)
+            .unwrap_or(0),
+        skippedTextFiles: text_results
+            .map(|results| results.stats.skippedFiles)
+            .unwrap_or(0),
+        candidatePatterns: pattern_count,
+    };
+    let local_ai_context = render_local_ai_context(
+        changes,
+        unknown_entries,
+        text_results,
+        &component_freq,
+        baseline_meta,
+        pattern_count,
+        generated_at,
+    );
+    let redux_making_atlas = render_redux_making_atlas(
+        changes,
+        unknown_entries,
+        text_results,
+        &component_freq,
+        &file_lessons,
+        &component_lessons,
+        pattern_count,
+        generated_at,
+    );
+    let artifact_names = [
+        "learning_corpus_index.json",
+        "component_frequency.json",
+        "file_type_frequency.json",
+        "analyzer_coverage.json",
+        "corpus_ai_change_notes.jsonl",
+        "component_lessons.jsonl",
+        "file_lessons.jsonl",
+        "training_candidates.jsonl",
+        "local_ai_context.md",
+        "redux_making_atlas.md",
+    ];
+
+    write_component_frequency(&corpus_dir, tool, timing, &component_freq)?;
+    write_file_type_frequency(&corpus_dir, tool, timing, &file_type_freq)?;
+    write_analyzer_coverage(&corpus_dir, &analyzer_coverage)?;
+    write_corpus_ai_change_notes(&corpus_dir, &corpus_ai_notes)?;
+    write_corpus_component_lessons(&corpus_dir, &component_lessons)?;
+    write_corpus_file_lessons(&corpus_dir, &file_lessons)?;
+    write_training_candidates(&corpus_dir, &training_candidates)?;
+    write_local_ai_context(&corpus_dir, &local_ai_context)?;
+    write_redux_making_atlas(&corpus_dir, &redux_making_atlas)?;
+    write_corpus_index(
+        &corpus_dir,
+        tool,
+        timing,
+        &totals,
+        baseline_meta,
+        modded_hash,
+        modded_filename,
+        &artifact_names,
+    )?;
+
+    println!("learning corpus summary:");
+    println!("  component groups: {}", component_freq.len());
+    println!("  file type groups: {}", file_type_freq.len());
+    println!(
+        "  analyzer coverage: {:.1}%",
+        analyzer_coverage.coveragePercent
+    );
+    println!("  ai change notes: {}", corpus_ai_notes.len());
+    println!("  component lessons: {}", component_lessons.len());
+    println!("  file lessons: {}", file_lessons.len());
+    println!("  training candidates: {}", training_candidates.len());
+
     Ok(())
 }
 
@@ -5079,7 +6615,9 @@ mod tests {
         assert!(result.found.contains(&"ptfx.rpf/".to_string()));
         assert!(result.found.contains(&"visualsettings.dat".to_string()));
         assert!(result.found.contains(&"gta5_cache_y.dat".to_string()));
-        assert!(result.found.contains(&"scaleform_frontend.rpf/".to_string()));
+        assert!(result
+            .found
+            .contains(&"scaleform_frontend.rpf/".to_string()));
     }
 
     #[test]
@@ -5281,9 +6819,18 @@ mod tests {
 
     #[test]
     fn recommend_action_mapping_correct() {
-        assert_eq!(recommend_action_from_label("obvious_update_rpf"), "import_as_update_rpf");
-        assert_eq!(recommend_action_from_label("likely_update_rpf"), "import_as_update_rpf");
-        assert_eq!(recommend_action_from_label("possible_update_rpf"), "review_before_import");
+        assert_eq!(
+            recommend_action_from_label("obvious_update_rpf"),
+            "import_as_update_rpf"
+        );
+        assert_eq!(
+            recommend_action_from_label("likely_update_rpf"),
+            "import_as_update_rpf"
+        );
+        assert_eq!(
+            recommend_action_from_label("possible_update_rpf"),
+            "review_before_import"
+        );
         assert_eq!(recommend_action_from_label("not_update_rpf"), "skip");
         assert_eq!(recommend_action_from_label("unknown_rpf"), "review");
         assert_eq!(recommend_action_from_label("scan_failed"), "review_error");
@@ -5314,7 +6861,9 @@ mod tests {
         assert_eq!(parsed.totalPaths, 21000);
         assert_eq!(parsed.archive.archiveFileName, "update.rpf");
         assert_eq!(parsed.treeFingerprintSha256, "fingerprint_hash_here");
-        assert!(parsed.anchorPathsFound.contains(&"american_rel.rpf/".to_string()));
+        assert!(parsed
+            .anchorPathsFound
+            .contains(&"american_rel.rpf/".to_string()));
     }
 
     #[test]
@@ -5346,7 +6895,10 @@ mod tests {
             score: 100,
             classification: "obvious_update_rpf".to_string(),
             usedForResult: true,
-            note: Some("Archive matched update.rpf tree when opened with logical name \"update.rpf\".".to_string()),
+            note: Some(
+                "Archive matched update.rpf tree when opened with logical name \"update.rpf\"."
+                    .to_string(),
+            ),
         };
         let json = serde_json::to_string(&attempt).unwrap();
         assert!(json.contains("\"physicalFileName\""));
@@ -5395,7 +6947,11 @@ mod tests {
         let (score, _, _, _) = score_classify_archive(&big_entries, &fp);
         // High score means no fallback needed
         let needs_fallback = score < 50;
-        assert!(!needs_fallback, "Expected no fallback needed for score={}", score);
+        assert!(
+            !needs_fallback,
+            "Expected no fallback needed for score={}",
+            score
+        );
     }
 
     #[test]
@@ -5405,7 +6961,11 @@ mod tests {
         let fp = fake_baseline_fp(21000);
         let (score, _, _, _) = score_classify_archive(&entries, &fp);
         let needs_fallback = score < 50;
-        assert!(needs_fallback, "Expected fallback needed for score={}", score);
+        assert!(
+            needs_fallback,
+            "Expected fallback needed for score={}",
+            score
+        );
     }
 
     #[test]
@@ -5417,7 +6977,10 @@ mod tests {
         // Score is low but we skip fallback because name is already correct.
         let score = 0u32;
         let needs_fallback = !is_already && score < 50;
-        assert!(!needs_fallback, "Should not trigger fallback when already named update.rpf");
+        assert!(
+            !needs_fallback,
+            "Should not trigger fallback when already named update.rpf"
+        );
     }
 
     #[test]
@@ -5445,7 +7008,8 @@ mod tests {
         assert!(
             label == "not_update_rpf" || label == "unknown_rpf",
             "Narrow vehicle pack should remain low even if fallback runs: label={}, score={}",
-            label, score
+            label,
+            score
         );
     }
 
@@ -5627,7 +7191,10 @@ mod tests {
             .iter()
             .filter(|entry| !is_text_candidate_ext(&entry.extension))
             .count();
-        let analyzer_count = entries.iter().filter(|entry| entry.analyzerRequired).count();
+        let analyzer_count = entries
+            .iter()
+            .filter(|entry| entry.analyzerRequired)
+            .count();
         assert_eq!(text_count, 1);
         assert_eq!(binary_count, 1);
         assert_eq!(analyzer_count, 1);
@@ -5733,6 +7300,336 @@ mod tests {
             stats.analyzedFiles
         );
     }
+
+    #[test]
+    fn compute_component_frequency_groups_by_component() {
+        let changes = vec![
+            Change {
+                path: "a.xml".to_string(),
+                status: "modified".to_string(),
+                cleanSize: 0,
+                moddedSize: 0,
+                cleanSha256: "".to_string(),
+                moddedSha256: "".to_string(),
+                extension: "xml".to_string(),
+                basename: "a.xml".to_string(),
+                parentPath: "".to_string(),
+                sizeDelta: 0,
+                sizeDeltaPercent: None,
+                category: "visual".to_string(),
+                components: vec!["sky_timecycle".to_string()],
+                editorNeeded: vec![],
+                risk: "low".to_string(),
+                likelyPattern: "".to_string(),
+                confidence: "medium".to_string(),
+                warning: None,
+                reason: "".to_string(),
+            },
+            Change {
+                path: "b.xml".to_string(),
+                status: "added".to_string(),
+                cleanSize: 0,
+                moddedSize: 0,
+                cleanSha256: "".to_string(),
+                moddedSha256: "".to_string(),
+                extension: "xml".to_string(),
+                basename: "b.xml".to_string(),
+                parentPath: "".to_string(),
+                sizeDelta: 100,
+                sizeDeltaPercent: None,
+                category: "visual".to_string(),
+                components: vec!["sky_timecycle".to_string()],
+                editorNeeded: vec![],
+                risk: "low".to_string(),
+                likelyPattern: "".to_string(),
+                confidence: "medium".to_string(),
+                warning: None,
+                reason: "".to_string(),
+            },
+        ];
+        let freq = compute_component_frequency(&changes);
+        let sky = freq.iter().find(|entry| entry.component == "sky_timecycle");
+        assert!(sky.is_some());
+        assert_eq!(sky.unwrap().totalChanged, 2);
+        assert_eq!(sky.unwrap().added, 1);
+        assert_eq!(sky.unwrap().modified, 1);
+    }
+
+    #[test]
+    fn compute_file_type_frequency_counts_extensions() {
+        let changes = vec![Change {
+            path: "c.dat".to_string(),
+            status: "modified".to_string(),
+            cleanSize: 0,
+            moddedSize: 0,
+            cleanSha256: "".to_string(),
+            moddedSha256: "".to_string(),
+            extension: "dat".to_string(),
+            basename: "c.dat".to_string(),
+            parentPath: "".to_string(),
+            sizeDelta: 50,
+            sizeDeltaPercent: None,
+            category: "config".to_string(),
+            components: vec!["unknown".to_string()],
+            editorNeeded: vec![],
+            risk: "low".to_string(),
+            likelyPattern: "".to_string(),
+            confidence: "low".to_string(),
+            warning: None,
+            reason: "".to_string(),
+        }];
+        let unknown_entries: Vec<UnknownEntry> = vec![];
+        let freq = compute_file_type_frequency(&changes, &unknown_entries);
+        let dat_entry = freq.iter().find(|entry| entry.extension == "dat");
+        assert!(dat_entry.is_some());
+        assert_eq!(dat_entry.unwrap().totalChanged, 1);
+    }
+
+    #[test]
+    fn build_corpus_ai_change_notes_creates_note() {
+        let summary = TextAnalysisFileSummary {
+            path: "test.xml".to_string(),
+            extension: "xml".to_string(),
+            analyzer: "xml_analyzer".to_string(),
+            status: "modified".to_string(),
+            sizeDelta: -100,
+            addedLines: 2,
+            removedLines: 3,
+            numericChanges: 5,
+            colorLikeChanges: 1,
+        };
+        let results = TextAnalysisResults {
+            xml_entries: vec![],
+            dat_entries: vec![],
+            meta_entries: vec![],
+            generic_entries: vec![],
+            analyzer_warnings: vec![],
+            stats: TextAnalysisStats {
+                totalCandidates: 1,
+                analyzedFiles: 1,
+                skippedFiles: 0,
+                xmlAnalyzed: 1,
+                datAnalyzed: 0,
+                metaAnalyzed: 0,
+                genericTextAnalyzed: 0,
+                parseFailures: 0,
+                extractionFailures: 0,
+                tooLargeSkipped: 0,
+                skippedNotTextBytes: 0,
+            },
+            file_summaries: vec![summary],
+        };
+        let notes = build_corpus_ai_change_notes(&results);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].extension, "xml");
+        assert!(!notes[0].safeForGeneration);
+        assert!(notes[0].safeForAiPlanning);
+    }
+
+    #[test]
+    fn build_training_candidates_requires_changes() {
+        let summary = TextAnalysisFileSummary {
+            path: "vis.dat".to_string(),
+            extension: "dat".to_string(),
+            analyzer: "dat_config_analyzer".to_string(),
+            status: "modified".to_string(),
+            sizeDelta: 100,
+            addedLines: 1,
+            removedLines: 0,
+            numericChanges: 10,
+            colorLikeChanges: 0,
+        };
+        let results = TextAnalysisResults {
+            xml_entries: vec![],
+            dat_entries: vec![],
+            meta_entries: vec![],
+            generic_entries: vec![],
+            analyzer_warnings: vec![],
+            stats: TextAnalysisStats {
+                totalCandidates: 1,
+                analyzedFiles: 1,
+                skippedFiles: 0,
+                xmlAnalyzed: 0,
+                datAnalyzed: 1,
+                metaAnalyzed: 0,
+                genericTextAnalyzed: 0,
+                parseFailures: 0,
+                extractionFailures: 0,
+                tooLargeSkipped: 0,
+                skippedNotTextBytes: 0,
+            },
+            file_summaries: vec![summary],
+        };
+        let changes: Vec<Change> = vec![];
+        let candidates = build_training_candidates(Some(&results), &changes);
+        assert!(!candidates.is_empty());
+        assert_eq!(candidates[0].trainingStatus, "candidate_unreviewed");
+        assert!(!candidates[0].expectedOutputStyle.safeForGeneration);
+    }
+
+    #[test]
+    fn training_candidate_serializes_correctly() {
+        let candidate = TrainingCandidate {
+            task: "explain_redux_file_change".to_string(),
+            trainingStatus: "candidate_unreviewed".to_string(),
+            input: TrainingCandidateInput {
+                path: "test.xml".to_string(),
+                extension: "xml".to_string(),
+                analyzerSummary: CorpusChangeSummary {
+                    addedLines: 1,
+                    removedLines: 0,
+                    numericChanges: 5,
+                    colorLikeChanges: 2,
+                },
+            },
+            expectedOutputStyle: TrainingCandidateExpected {
+                componentHypothesis: "unknown - review required".to_string(),
+                risk: "low".to_string(),
+                recommendedTool: "xml_timecycle_editor".to_string(),
+                safeForGeneration: false,
+            },
+        };
+        let json = serde_json::to_string(&candidate).unwrap();
+        assert!(json.contains("candidate_unreviewed"));
+        assert!(json.contains("safeForGeneration"));
+        assert!(!json.contains("password"));
+        assert!(!json.contains("key"));
+    }
+
+    #[test]
+    fn render_local_ai_context_contains_sections() {
+        let changes: Vec<Change> = vec![];
+        let unknown: Vec<UnknownEntry> = vec![];
+        let freq: Vec<ComponentFreqEntry> = vec![];
+        let baseline_meta = BaselineMetadataFile {
+            baselineArchiveHash: "abc123".to_string(),
+            baselineArchiveSizeBytes: 1000,
+            baselineArchiveFileName: "update.rpf".to_string(),
+            baselineArchivePath: None,
+        };
+        let result = render_local_ai_context(
+            &changes,
+            &unknown,
+            None,
+            &freq,
+            &baseline_meta,
+            0,
+            "2025-01-01T00:00:00Z",
+        );
+        assert!(result.contains("# Local AI Context"));
+        assert!(result.contains("What was compared"));
+        assert!(result.contains("safe to reason about") || result.contains("Safe to"));
+        assert!(result.contains("NOT safe") || result.contains("not safe"));
+    }
+
+    #[test]
+    fn corpus_index_contains_warning() {
+        let totals = CorpusTotals {
+            added: 100,
+            removed: 50,
+            modified: 200,
+            totalUnknown: 13894,
+            textCandidates: 960,
+            binaryCandidates: 12934,
+            analyzedTextFiles: 141,
+            skippedTextFiles: 841,
+            candidatePatterns: 99,
+        };
+        let index = CorpusIndex {
+            schemaVersion: "2.0".to_string(),
+            generatedAt: "2025-01-01T00:00:00Z".to_string(),
+            scannerVersion: "0.2.0".to_string(),
+            baselineArchiveHash: "abc".to_string(),
+            baselineArchiveFileName: "update.rpf".to_string(),
+            moddedArchiveHash: "def".to_string(),
+            moddedArchiveFileName: "update.rpf".to_string(),
+            sourceArtifacts: vec!["clean_vs_modded_diff.json".to_string()],
+            totals,
+            artifacts: vec!["learning_corpus/learning_corpus_index.json".to_string()],
+            warning: "local-only".to_string(),
+        };
+        let json = serde_json::to_string(&index).unwrap();
+        assert!(json.contains("local-only") || json.contains("warning"));
+    }
+
+    #[test]
+    fn missing_text_results_handled_gracefully() {
+        let changes: Vec<Change> = vec![];
+        let notes = build_corpus_ai_change_notes_from_opt(None);
+        assert!(notes.is_empty());
+        let lessons = build_file_lessons(&changes, None);
+        assert!(lessons.is_empty());
+        let candidates = build_training_candidates(None, &changes);
+        assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn corpus_recommended_future_tool_maps_extensions() {
+        assert_eq!(
+            corpus_recommended_future_tool("xml"),
+            "xml_timecycle_editor"
+        );
+        assert_eq!(corpus_recommended_future_tool("dat"), "dat_config_patcher");
+        assert_eq!(
+            corpus_recommended_future_tool("ytd"),
+            "ytd_texture_analyzer"
+        );
+        assert_eq!(corpus_recommended_future_tool("bin"), "unknown_analyzer");
+    }
+
+    #[test]
+    fn render_redux_making_atlas_contains_sections() {
+        let result =
+            render_redux_making_atlas(&[], &[], None, &[], &[], &[], 0, "2025-01-01T00:00:00Z");
+        assert!(result.contains("# Redux Making Atlas"));
+        assert!(result.contains("Known Component Changes"));
+        assert!(result.contains("Future Tool Recommendations"));
+    }
+
+    #[test]
+    fn file_type_frequency_marks_binary_extensions_analyzer_required() {
+        let changes = vec![Change {
+            path: "a.ytd".to_string(),
+            status: "modified".to_string(),
+            cleanSize: 0,
+            moddedSize: 0,
+            cleanSha256: "".to_string(),
+            moddedSha256: "".to_string(),
+            extension: "ytd".to_string(),
+            basename: "a.ytd".to_string(),
+            parentPath: "".to_string(),
+            sizeDelta: 0,
+            sizeDeltaPercent: None,
+            category: "texture".to_string(),
+            components: vec!["unknown".to_string()],
+            editorNeeded: vec![],
+            risk: "low".to_string(),
+            likelyPattern: "".to_string(),
+            confidence: "low".to_string(),
+            warning: None,
+            reason: "".to_string(),
+        }];
+        let unknown_entries = vec![UnknownEntry {
+            path: "a.ytd".to_string(),
+            status: "modified".to_string(),
+            name: "a.ytd".to_string(),
+            extension: "ytd".to_string(),
+            cleanSizeBytes: 0,
+            moddedSizeBytes: 0,
+            sizeDeltaBytes: 0,
+            cleanSha256: "".to_string(),
+            moddedSha256: "".to_string(),
+            categoryGuess: "texture".to_string(),
+            unknownClass: "unknown_binary_candidate".to_string(),
+            analyzerRequired: true,
+            safeForAiTextExtraction: false,
+            nestedArchivePath: None,
+            reason: "".to_string(),
+            priority: "high".to_string(),
+        }];
+        let freq = compute_file_type_frequency(&changes, &unknown_entries);
+        assert_eq!(freq[0].analyzerStatus, "analyzer_required");
+    }
 }
 
 fn main() -> Result<()> {
@@ -5822,32 +7719,31 @@ fn main() -> Result<()> {
             }
             let rules = load_rules(&args, &mut warnings)?;
 
-            let (clean_entries, _clean_counters) =
-                scan_archive(
-                    &clean,
-                    &keys,
-                    args.depth,
-                    scan_options,
-                    rules.target_rules.as_ref(),
-                    &mut warnings,
-                )
-                    .with_context(|| format!("failed to scan clean archive {}", clean.display()))?;
+            let (clean_entries, _clean_counters) = scan_archive(
+                &clean,
+                &keys,
+                args.depth,
+                scan_options,
+                rules.target_rules.as_ref(),
+                &mut warnings,
+            )
+            .with_context(|| format!("failed to scan clean archive {}", clean.display()))?;
 
-            let (modded_entries, _modded_counters) =
-                scan_archive(
-                    &modded,
-                    &keys,
-                    args.depth,
-                    scan_options,
-                    rules.target_rules.as_ref(),
-                    &mut warnings,
-                )
-                    .with_context(|| {
-                        format!("failed to scan modded archive {}", modded.display())
-                    })?;
+            let (modded_entries, _modded_counters) = scan_archive(
+                &modded,
+                &keys,
+                args.depth,
+                scan_options,
+                rules.target_rules.as_ref(),
+                &mut warnings,
+            )
+            .with_context(|| format!("failed to scan modded archive {}", modded.display()))?;
 
-            let changes =
-                diff_maps(&clean_entries, &modded_entries, rules.component_rules.as_ref());
+            let changes = diff_maps(
+                &clean_entries,
+                &modded_entries,
+                rules.component_rules.as_ref(),
+            );
             let components = classify(&changes, rules.component_rules.as_ref());
 
             let timing = Timing {
@@ -5930,7 +7826,10 @@ fn main() -> Result<()> {
             println!("compare complete");
             println!("clean entries: {}", clean_entries.len());
             println!("modded entries: {}", modded_entries.len());
-            println!("added: {}  removed: {}  modified: {}", added, removed, modified);
+            println!(
+                "added: {}  removed: {}  modified: {}",
+                added, removed, modified
+            );
             println!("out: {}", out.display());
 
             println!("\nComponents:");
@@ -5951,12 +7850,21 @@ fn main() -> Result<()> {
             let tool = build_tool_metadata(&args);
             let started_at = OffsetDateTime::now_utc();
             let start_instant = Instant::now();
-            let archive = args.archive.clone().context("baseline-scan requires --archive")?;
+            let archive = args
+                .archive
+                .clone()
+                .context("baseline-scan requires --archive")?;
             let keys_path = args.keys.clone().context("baseline-scan requires --keys")?;
-            let out_dir = args.out.clone().context("baseline-scan requires --out (output folder)")?;
+            let out_dir = args
+                .out
+                .clone()
+                .context("baseline-scan requires --out (output folder)")?;
 
             fs::create_dir_all(&out_dir).with_context(|| {
-                format!("failed to create baseline output dir: {}", out_dir.display())
+                format!(
+                    "failed to create baseline output dir: {}",
+                    out_dir.display()
+                )
             })?;
 
             let archive_identity = build_archive_identity(&archive)?;
@@ -6033,10 +7941,22 @@ fn main() -> Result<()> {
             let tool = build_tool_metadata(&args);
             let started_at = OffsetDateTime::now_utc();
             let start_instant = Instant::now();
-            let modded = args.modded.clone().context("diff-against-baseline requires --modded")?;
-            let baseline_dir = args.baseline.clone().context("diff-against-baseline requires --baseline")?;
-            let keys_path = args.keys.clone().context("diff-against-baseline requires --keys")?;
-            let out_dir = args.out.clone().context("diff-against-baseline requires --out (output folder)")?;
+            let modded = args
+                .modded
+                .clone()
+                .context("diff-against-baseline requires --modded")?;
+            let baseline_dir = args
+                .baseline
+                .clone()
+                .context("diff-against-baseline requires --baseline")?;
+            let keys_path = args
+                .keys
+                .clone()
+                .context("diff-against-baseline requires --keys")?;
+            let out_dir = args
+                .out
+                .clone()
+                .context("diff-against-baseline requires --out (output folder)")?;
 
             fs::create_dir_all(&out_dir).with_context(|| {
                 format!("failed to create diff output dir: {}", out_dir.display())
@@ -6084,7 +8004,11 @@ fn main() -> Result<()> {
             };
 
             // Diff
-            let changes = diff_maps(&clean_entries, &modded_entries, rules.component_rules.as_ref());
+            let changes = diff_maps(
+                &clean_entries,
+                &modded_entries,
+                rules.component_rules.as_ref(),
+            );
             let components = classify(&changes, rules.component_rules.as_ref());
 
             let clean_entry_count = clean_entries.len();
@@ -6149,6 +8073,8 @@ fn main() -> Result<()> {
                 &warnings,
             )?;
 
+            let mut text_analysis_results: Option<TextAnalysisResults> = None;
+
             if args.analyze_text {
                 let clean_archive_path = if let Some(ref p) = args.clean {
                     Some(p.clone())
@@ -6212,6 +8138,7 @@ fn main() -> Result<()> {
                                     "  extraction failures: {}",
                                     results.stats.extractionFailures
                                 );
+                                text_analysis_results = Some(results);
                             }
                             Err(e) => {
                                 push_warning(
@@ -6223,6 +8150,45 @@ fn main() -> Result<()> {
                                 println!("text analysis failed: {}", e);
                             }
                         }
+                    }
+                }
+            }
+
+            // Learning corpus (R0.8)
+            if args.build_learning_corpus {
+                let modded_hash = modded_identity.archiveSha256.as_str();
+                let modded_filename = modded_identity.archiveFileName.as_str();
+                let generated_at = format!(
+                    "{}",
+                    OffsetDateTime::now_utc()
+                        .format(&Rfc3339)
+                        .unwrap_or_default()
+                );
+                match build_and_write_learning_corpus(
+                    &out_dir,
+                    &changes,
+                    &unknown_entries,
+                    text_analysis_results.as_ref(),
+                    &tool,
+                    &timing,
+                    &baseline_meta,
+                    modded_hash,
+                    modded_filename,
+                    pattern_count,
+                    &generated_at,
+                ) {
+                    Ok(()) => println!(
+                        "learning corpus written to: {}/learning_corpus",
+                        out_dir.display()
+                    ),
+                    Err(e) => {
+                        push_warning(
+                            &mut warnings,
+                            "CORPUS_BUILD_ERROR",
+                            "",
+                            format!("corpus build failed: {}", e),
+                        );
+                        println!("corpus build failed: {}", e);
                     }
                 }
             }
@@ -6257,8 +8223,14 @@ fn main() -> Result<()> {
             let tool = build_tool_metadata(&args);
             let started_at = OffsetDateTime::now_utc();
             let start_instant = Instant::now();
-            let archive = args.archive.clone().context("classify-rpf requires --archive")?;
-            let baseline_dir = args.baseline.clone().context("classify-rpf requires --baseline")?;
+            let archive = args
+                .archive
+                .clone()
+                .context("classify-rpf requires --archive")?;
+            let baseline_dir = args
+                .baseline
+                .clone()
+                .context("classify-rpf requires --baseline")?;
             let keys_path = args.keys.clone().context("classify-rpf requires --keys")?;
             let out_path = args.out.clone().context("classify-rpf requires --out")?;
 
@@ -6297,11 +8269,17 @@ fn main() -> Result<()> {
                 .to_string();
 
             // ── Attempt 1: physical filename ─────────────────────────────────
-            let (a1_entries_opt, a1_note) =
-                match scan_archive(&archive, &keys, args.depth, scan_options, None, &mut warnings) {
-                    Ok((entries, _)) => (Some(entries), None),
-                    Err(e) => (None, Some(format!("scan failed: {}", e))),
-                };
+            let (a1_entries_opt, a1_note) = match scan_archive(
+                &archive,
+                &keys,
+                args.depth,
+                scan_options,
+                None,
+                &mut warnings,
+            ) {
+                Ok((entries, _)) => (Some(entries), None),
+                Err(e) => (None, Some(format!("scan failed: {}", e))),
+            };
 
             let (a1_score, a1_reasons, a1_matched, a1_missing, a1_count, a1_label) =
                 if let Some(ref entries) = a1_entries_opt {
@@ -6316,8 +8294,7 @@ fn main() -> Result<()> {
             // Skip fallback if archive is already named update.rpf (key derivation already correct).
             // Skip fallback if initial score is already confident enough.
             let logical_fallback_name = "update.rpf";
-            let is_already_update_rpf =
-                physical_file_name.to_lowercase() == logical_fallback_name;
+            let is_already_update_rpf = physical_file_name.to_lowercase() == logical_fallback_name;
             let needs_fallback = !is_already_update_rpf && a1_score < 50;
 
             let (a2_entries_opt, a2_note) = if needs_fallback {
@@ -6332,9 +8309,7 @@ fn main() -> Result<()> {
                             &mut warnings,
                         ) {
                             Ok((entries, _)) => (Some(entries), None),
-                            Err(e) => {
-                                (None, Some(format!("logical-name scan failed: {}", e)))
-                            }
+                            Err(e) => (None, Some(format!("logical-name scan failed: {}", e))),
                         };
                         drop(temp_dir);
                         result
@@ -6359,15 +8334,41 @@ fn main() -> Result<()> {
 
             // ── Pick best result ──────────────────────────────────────────────
             let use_fallback = needs_fallback && a2_score > a1_score;
-            let used_logical_name: Option<&str> =
-                if use_fallback { Some(logical_fallback_name) } else { None };
+            let used_logical_name: Option<&str> = if use_fallback {
+                Some(logical_fallback_name)
+            } else {
+                None
+            };
 
-            let (final_score, mut final_reasons, final_matched, final_missing, final_count, final_label, final_entries_ref) =
-                if use_fallback {
-                    (a2_score, a2_reasons.clone(), a2_matched.clone(), a2_missing.clone(), a2_count, a2_label.clone(), &a2_entries_opt)
-                } else {
-                    (a1_score, a1_reasons.clone(), a1_matched.clone(), a1_missing.clone(), a1_count, a1_label.clone(), &a1_entries_opt)
-                };
+            let (
+                final_score,
+                mut final_reasons,
+                final_matched,
+                final_missing,
+                final_count,
+                final_label,
+                final_entries_ref,
+            ) = if use_fallback {
+                (
+                    a2_score,
+                    a2_reasons.clone(),
+                    a2_matched.clone(),
+                    a2_missing.clone(),
+                    a2_count,
+                    a2_label.clone(),
+                    &a2_entries_opt,
+                )
+            } else {
+                (
+                    a1_score,
+                    a1_reasons.clone(),
+                    a1_matched.clone(),
+                    a1_missing.clone(),
+                    a1_count,
+                    a1_label.clone(),
+                    &a1_entries_opt,
+                )
+            };
 
             // Prepend a clear reason when the fallback drove the result
             if use_fallback {

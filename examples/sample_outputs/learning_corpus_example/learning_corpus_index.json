@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "learning_corpus_index",
+  "generatedAt": "2025-01-01T00:00:00Z",
+  "scannerVersion": "0.2.0",
+  "baselineArchiveHash": "aabbccdd00112233aabbccdd00112233aabbccdd00112233aabbccdd00112233",
+  "baselineArchiveFileName": "update.rpf",
+  "moddedArchiveHash": "99887766554433229988776655443322998877665544332299887766554433220",
+  "moddedArchiveFileName": "update.rpf",
+  "sourceArtifacts": [
+    "clean_vs_modded_diff.json",
+    "unknown_changes.json",
+    "candidate_patterns.json",
+    "text_analysis_summary.json",
+    "xml_diffs.json",
+    "dat_diffs.json",
+    "meta_diffs.json",
+    "ai_readable_change_notes.jsonl"
+  ],
+  "totals": {
+    "added": 2976,
+    "removed": 9855,
+    "modified": 1552,
+    "totalUnknown": 13894,
+    "textCandidates": 960,
+    "binaryCandidates": 12934,
+    "analyzedTextFiles": 141,
+    "skippedTextFiles": 841,
+    "candidatePatterns": 99
+  },
+  "artifacts": [
+    "learning_corpus/learning_corpus_index.json",
+    "learning_corpus/component_frequency.json",
+    "learning_corpus/file_type_frequency.json",
+    "learning_corpus/analyzer_coverage.json",
+    "learning_corpus/corpus_ai_change_notes.jsonl",
+    "learning_corpus/component_lessons.jsonl",
+    "learning_corpus/file_lessons.jsonl",
+    "learning_corpus/training_candidates.jsonl",
+    "learning_corpus/local_ai_context.md",
+    "learning_corpus/redux_making_atlas.md"
+  ],
+  "warning": "local-only — derived from game/mod files — do not commit if generated from real game data"
+}

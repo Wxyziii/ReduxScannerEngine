@@ -1,0 +1,68 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "file_type_frequency",
+  "tool": { "name": "rpf_backend_rs", "version": "0.2.0" },
+  "entries": [
+    {
+      "extension": "gxt2",
+      "totalChanged": 7917,
+      "added": 0,
+      "removed": 7917,
+      "modified": 0,
+      "knownCount": 0,
+      "unknownCount": 7917,
+      "textCandidateCount": 0,
+      "binaryCandidateCount": 7917,
+      "analyzerStatus": "analyzer_required"
+    },
+    {
+      "extension": "ytd",
+      "totalChanged": 2322,
+      "added": 50,
+      "removed": 200,
+      "modified": 2072,
+      "knownCount": 400,
+      "unknownCount": 1922,
+      "textCandidateCount": 0,
+      "binaryCandidateCount": 2322,
+      "analyzerStatus": "analyzer_required"
+    },
+    {
+      "extension": "xml",
+      "totalChanged": 120,
+      "added": 5,
+      "removed": 2,
+      "modified": 113,
+      "knownCount": 30,
+      "unknownCount": 90,
+      "textCandidateCount": 120,
+      "binaryCandidateCount": 0,
+      "analyzerStatus": "analyzed"
+    },
+    {
+      "extension": "dat",
+      "totalChanged": 90,
+      "added": 0,
+      "removed": 0,
+      "modified": 90,
+      "knownCount": 20,
+      "unknownCount": 70,
+      "textCandidateCount": 29,
+      "binaryCandidateCount": 61,
+      "analyzerStatus": "analyzed"
+    },
+    {
+      "extension": "meta",
+      "totalChanged": 220,
+      "added": 40,
+      "removed": 10,
+      "modified": 170,
+      "knownCount": 50,
+      "unknownCount": 170,
+      "textCandidateCount": 220,
+      "binaryCandidateCount": 0,
+      "analyzerStatus": "analyzed"
+    }
+  ]
+}

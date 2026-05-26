@@ -668,3 +668,76 @@ proprietary content. Store them locally only.
 
 See `examples/sample_outputs/text_analyzers_example/` for sanitized examples with
 fake paths and fake values.
+
+
+## R0.8: Learning Corpus Builder
+
+After `diff-against-baseline`, add `--build-learning-corpus` to generate a structured
+local AI-readable corpus from all scan, diff, unknown-pattern, and text-analyzer outputs.
+
+### Usage
+
+```
+redux_rpf_scanner.exe diff-against-baseline ^
+  --modded <modded_update.rpf> ^
+  --baseline <baseline_output_dir> ^
+  --keys <keys_dir> ^
+  --out <diff_output_dir> ^
+  --clean <clean_update.rpf> ^
+  --analyze-text ^
+  --build-learning-corpus
+```
+
+`--build-learning-corpus` is **optional**. It can be combined with `--analyze-text` for
+maximum corpus coverage, or used alone for a file-level-only corpus.
+
+The corpus is written to `<diff_output_dir>/learning_corpus/`.
+
+### Artifacts produced
+
+| File | Description |
+|------|-------------|
+| `learning_corpus_index.json` | Index of all corpus artifacts with totals and source list |
+| `component_frequency.json` | Known/unknown component change counts, top extensions, top paths |
+| `file_type_frequency.json` | Per-extension change stats with analyzer status |
+| `analyzer_coverage.json` | R0.7 coverage summary with coveragePercent |
+| `corpus_ai_change_notes.jsonl` | One AI-readable note per analyzed text file with hypothesis |
+| `component_lessons.jsonl` | One lesson per component with evidence and recommended next step |
+| `file_lessons.jsonl` | One lesson per important changed file with impact metrics |
+| `training_candidates.jsonl` | Candidate supervised examples for future AI training (unreviewed) |
+| `local_ai_context.md` | Human/AI-readable Markdown context: what changed, what is safe |
+| `redux_making_atlas.md` | High-level component map, pattern summary, and tool recommendations |
+
+### What the corpus builder does
+
+- Aggregates all diff, unknown-pattern, and text-analyzer outputs into one structured corpus
+- Groups changes by component and extension for frequency analysis
+- Generates cautious hypotheses (never overclaims game meaning)
+- Marks all training candidates as `candidate_unreviewed`
+- Produces two Markdown reports (`local_ai_context.md`, `redux_making_atlas.md`) that
+  summarize what is safe to reason about and what requires future work
+
+### No LLM calls
+
+The corpus builder is entirely local and deterministic. No LLM or AI API is called.
+`corpus_ai_change_notes.jsonl` and `training_candidates.jsonl` are **metadata-only** queues
+for future human review or optional LLM processing — they contain no raw file contents.
+
+All hypotheses in the corpus are explicitly marked as unconfirmed.
+
+### For future AI / RAG / training use
+
+The `learning_corpus/` folder is designed to be:
+- read by a future RAG system to answer questions about Redux components
+- used as a candidate dataset for supervised learning (after human review)
+- used to guide AI-assisted Redux design planning in the HomeOps project
+
+`training_candidates.jsonl` must be reviewed and relabeled before any actual training use.
+
+### Do not commit real corpus artifacts
+
+Do not commit `learning_corpus/` folders generated from real GTA V game files. They are
+derived from proprietary content. Store them locally only.
+
+See `examples/sample_outputs/learning_corpus_example/` for sanitized examples with
+fake paths and hashes.
