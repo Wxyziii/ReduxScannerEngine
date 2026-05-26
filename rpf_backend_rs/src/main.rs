@@ -1571,13 +1571,13 @@ fn apply_fallback_classification(ch: &Change, reports: &mut BTreeMap<String, Com
 
     if b == "core.ypt" || p.ends_with("/core.ypt") {
         let tracer = ensure_component_report(reports, "tracer", "Tracer");
-        let hit = ensure_component_report(reports, "hit_effect", "Hit Effect / Blood Spray");
         add_hit(
             tracer,
             ch,
             "medium",
             "core.ypt changed; tracer lives inside this particle container.",
         );
+        let hit = ensure_component_report(reports, "hit_effect", "Hit Effect / Blood Spray");
         add_hit(
             hit,
             ch,
@@ -1588,13 +1588,13 @@ fn apply_fallback_classification(ch: &Change, reports: &mut BTreeMap<String, Com
 
     if b == "ptfx.rpf" || p.contains("effects/ptfx.rpf") || p.contains("ptfx.rpf") {
         let tracer = ensure_component_report(reports, "tracer", "Tracer");
-        let hit = ensure_component_report(reports, "hit_effect", "Hit Effect / Blood Spray");
         add_hit(
             tracer,
             ch,
             "medium",
             "ptfx.rpf container changed; tracer/core.ypt likely changed inside.",
         );
+        let hit = ensure_component_report(reports, "hit_effect", "Hit Effect / Blood Spray");
         add_hit(
             hit,
             ch,
@@ -1807,9 +1807,9 @@ fn main() -> Result<()> {
             let scan_options = scan_options_for_mode(args.mode, false);
             let started_at = OffsetDateTime::now_utc();
             let start_instant = Instant::now();
-            let archive = args.archive.context("scan requires --archive")?;
-            let keys_path = args.keys.context("scan requires --keys")?;
-            let out = args.out.context("scan requires --out")?;
+            let archive = args.archive.clone().context("scan requires --archive")?;
+            let keys_path = args.keys.clone().context("scan requires --keys")?;
+            let out = args.out.clone().context("scan requires --out")?;
             ensure_parent_dir(&out)?;
 
             let keys = GtaKeys::load_from_path(&keys_path).with_context(|| {
@@ -1860,10 +1860,10 @@ fn main() -> Result<()> {
             let scan_options = scan_options_for_mode(args.mode, true);
             let started_at = OffsetDateTime::now_utc();
             let start_instant = Instant::now();
-            let clean = args.clean.context("compare requires --clean")?;
-            let modded = args.modded.context("compare requires --modded")?;
-            let keys_path = args.keys.context("compare requires --keys")?;
-            let out = args.out.context("compare requires --out")?;
+            let clean = args.clean.clone().context("compare requires --clean")?;
+            let modded = args.modded.clone().context("compare requires --modded")?;
+            let keys_path = args.keys.clone().context("compare requires --keys")?;
+            let out = args.out.clone().context("compare requires --out")?;
             ensure_parent_dir(&out)?;
 
             let keys = GtaKeys::load_from_path(&keys_path).with_context(|| {

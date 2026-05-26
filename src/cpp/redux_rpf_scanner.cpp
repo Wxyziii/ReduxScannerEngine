@@ -324,6 +324,19 @@ static std::vector<std::string> build_backend_args(const Args& args) {
         v.push_back("--targets-only");
     }
 
+    if (!args.component_rules.empty()) {
+        v.push_back("--component-rules");
+        v.push_back(path_to_utf8(args.component_rules));
+    }
+    if (!args.target_rules.empty()) {
+        v.push_back("--target-rules");
+        v.push_back(path_to_utf8(args.target_rules));
+    }
+    if (!args.rules_dir.empty()) {
+        v.push_back("--rules-dir");
+        v.push_back(path_to_utf8(args.rules_dir));
+    }
+
     return v;
 }
 
