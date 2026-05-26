@@ -196,7 +196,7 @@ struct RichMetadata {
     warning: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct EntryInfo {
     path: String,
     name: String,
@@ -298,6 +298,7 @@ struct Args {
     rules_dir: Option<PathBuf>,
     scanner_name: Option<String>,
     scanner_version: Option<String>,
+    baseline: Option<PathBuf>,
 }
 
 fn usage() {
@@ -314,6 +315,10 @@ Commands:
   baseline-scan --archive <update.rpf> --keys <keys_dir> --out <baseline_output_dir>
                 [--depth 2] [--mode full]
                 [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
+  diff-against-baseline --modded <modded.update.rpf> --baseline <baseline_output_dir>
+                --keys <keys_dir> --out <diff_output_dir>
+                [--depth 2]
+                [--component-rules <path>] [--target-rules <path>] [--rules-dir <path>]
   version
 
 Notes:
@@ -323,6 +328,9 @@ Notes:
   - --all and --targets-only are deprecated; use --mode instead.
   - baseline-scan writes: full_clean_manifest.json, full_clean_tree.json,
     baseline_update_tree_fingerprint.json, baseline_metadata.json into the --out folder.
+  - diff-against-baseline reads baseline from --baseline folder and writes:
+    full_modded_manifest.json, full_modded_tree.json,
+    clean_vs_modded_diff.json, diff_summary.json into the --out folder.
 "#
     );
 }
@@ -366,6 +374,7 @@ fn parse_args() -> Result<Args> {
         rules_dir: None,
         scanner_name: None,
         scanner_version: None,
+        baseline: None,
     };
 
     let mut explicit_mode: Option<ScanMode> = None;
@@ -423,6 +432,10 @@ fn parse_args() -> Result<Args> {
             "--rules-dir" => {
                 args.rules_dir =
                     Some(PathBuf::from(it.next().context("missing value for --rules-dir")?))
+            }
+            "--baseline" => {
+                args.baseline =
+                    Some(PathBuf::from(it.next().context("missing value for --baseline")?))
             }
             "--all" => {
                 args.deprecated_flag_used = true;
@@ -2258,6 +2271,458 @@ fn write_baseline_metadata(
     Ok(())
 }
 
+// ── Baseline loading structs ──────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct BaselineManifestFile {
+    files: Vec<EntryInfo>,
+}
+
+#[derive(Deserialize)]
+struct BaselineMetadataFile {
+    baselineArchiveHash: String,
+    baselineArchiveSizeBytes: u64,
+    baselineArchiveFileName: String,
+}
+
+fn load_baseline_manifest(baseline_dir: &Path) -> Result<BTreeMap<String, EntryInfo>> {
+    let manifest_path = baseline_dir.join("full_clean_manifest.json");
+    let contents = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read baseline manifest: {}", manifest_path.display()))?;
+    let parsed: BaselineManifestFile = serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse baseline manifest: {}", manifest_path.display()))?;
+    let mut map = BTreeMap::new();
+    for entry in parsed.files {
+        map.insert(entry.path.clone(), entry);
+    }
+    Ok(map)
+}
+
+fn load_baseline_metadata_file(baseline_dir: &Path) -> Result<BaselineMetadataFile> {
+    let meta_path = baseline_dir.join("baseline_metadata.json");
+    let contents = fs::read_to_string(&meta_path)
+        .with_context(|| format!("failed to read baseline metadata: {}", meta_path.display()))?;
+    serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse baseline metadata: {}", meta_path.display()))
+}
+
+// ── Diff write functions ──────────────────────────────────────────────────────
+
+fn write_full_modded_manifest(
+    out_dir: &Path,
+    archive_identity: &ArchiveIdentity,
+    keys_path: &Path,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    scan: &ScanMetadata,
+    rules: &RulesMetadata,
+    entries: &BTreeMap<String, EntryInfo>,
+    warnings: &[Warning],
+    counters: &ScanCounters,
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct ModdedFileEntry<'a> {
+        path: &'a str,
+        name: &'a str,
+        extension: &'a str,
+        sizeBytes: usize,
+        sha256: &'a str,
+        source: &'a str,
+        isTextCandidate: bool,
+        isBinaryCandidate: bool,
+    }
+
+    #[derive(Serialize)]
+    struct ModdedScanBlock<'a> {
+        mode: &'a str,
+        depth: usize,
+        archivePath: &'a str,
+        archiveFileName: &'a str,
+        archiveSizeBytes: u64,
+        archiveSha256: &'a str,
+        keysPathProvided: bool,
+    }
+
+    #[derive(Serialize)]
+    struct ModdedManifestStats {
+        totalEntries: usize,
+        scannedEntries: usize,
+        targetEntries: usize,
+        nestedArchivesOpened: usize,
+        textCandidates: usize,
+        binaryCandidates: usize,
+        warnings: usize,
+    }
+
+    #[derive(Serialize)]
+    struct ModdedManifest<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        scan: ModdedScanBlock<'a>,
+        rules: &'a RulesMetadata,
+        stats: ModdedManifestStats,
+        warnings: &'a [Warning],
+        files: Vec<ModdedFileEntry<'a>>,
+    }
+
+    let files: Vec<ModdedFileEntry> = entries
+        .values()
+        .map(|e| {
+            let is_text = is_text_candidate(&e.path);
+            ModdedFileEntry {
+                path: &e.path,
+                name: &e.name,
+                extension: &e.extension,
+                sizeBytes: e.sizeBytes,
+                sha256: &e.sha256,
+                source: &e.source,
+                isTextCandidate: is_text,
+                isBinaryCandidate: !is_text,
+            }
+        })
+        .collect();
+
+    let text_count = files.iter().filter(|f| f.isTextCandidate).count();
+
+    let manifest = ModdedManifest {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "full_modded_manifest",
+        tool,
+        timing,
+        scan: ModdedScanBlock {
+            mode: &scan.mode,
+            depth: scan.depth,
+            archivePath: &archive_identity.archivePath,
+            archiveFileName: &archive_identity.archiveFileName,
+            archiveSizeBytes: archive_identity.archiveSizeBytes,
+            archiveSha256: &archive_identity.archiveSha256,
+            keysPathProvided: !keys_path.as_os_str().is_empty(),
+        },
+        rules,
+        stats: ModdedManifestStats {
+            totalEntries: entries.len(),
+            scannedEntries: entries.len(),
+            targetEntries: counters.target_entries,
+            nestedArchivesOpened: counters.nested_archives_opened,
+            textCandidates: text_count,
+            binaryCandidates: entries.len() - text_count,
+            warnings: warnings.len(),
+        },
+        warnings,
+        files,
+    };
+
+    let out = out_dir.join("full_modded_manifest.json");
+    let json = serde_json::to_string_pretty(&manifest)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_full_modded_tree(
+    out_dir: &Path,
+    archive_identity: &ArchiveIdentity,
+    tool: &ToolMetadata,
+    scan: &ScanMetadata,
+    entries: &BTreeMap<String, EntryInfo>,
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct ExtHistEntry {
+        extension: String,
+        count: usize,
+    }
+
+    #[derive(Serialize)]
+    struct TreeIdentityBlock<'a> {
+        archivePath: &'a str,
+        archiveFileName: &'a str,
+        archiveSizeBytes: u64,
+        archiveSha256: &'a str,
+    }
+
+    #[derive(Serialize)]
+    struct TreeStats {
+        totalEntries: usize,
+        nestedArchiveEntries: usize,
+        textCandidateEntries: usize,
+    }
+
+    #[derive(Serialize)]
+    struct ModdedTree<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        archive: TreeIdentityBlock<'a>,
+        mode: &'a str,
+        depth: usize,
+        stats: TreeStats,
+        topLevelFolders: Vec<String>,
+        extensionCounts: Vec<ExtHistEntry>,
+        paths: Vec<&'a str>,
+    }
+
+    let top_folders = collect_top_level_folders(entries);
+    let ext_hist = build_extension_histogram(entries);
+    let ext_counts: Vec<ExtHistEntry> = ext_hist
+        .into_iter()
+        .map(|(extension, count)| ExtHistEntry { extension, count })
+        .collect();
+
+    let nested_count = entries.values().filter(|e| e.extension == "rpf").count();
+    let text_count = entries.values().filter(|e| is_text_candidate(&e.path)).count();
+    let paths: Vec<&str> = entries.values().map(|e| e.path.as_str()).collect();
+
+    let tree = ModdedTree {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "full_modded_tree",
+        tool,
+        archive: TreeIdentityBlock {
+            archivePath: &archive_identity.archivePath,
+            archiveFileName: &archive_identity.archiveFileName,
+            archiveSizeBytes: archive_identity.archiveSizeBytes,
+            archiveSha256: &archive_identity.archiveSha256,
+        },
+        mode: &scan.mode,
+        depth: scan.depth,
+        stats: TreeStats {
+            totalEntries: entries.len(),
+            nestedArchiveEntries: nested_count,
+            textCandidateEntries: text_count,
+        },
+        topLevelFolders: top_folders,
+        extensionCounts: ext_counts,
+        paths,
+    };
+
+    let out = out_dir.join("full_modded_tree.json");
+    let json = serde_json::to_string_pretty(&tree)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_clean_vs_modded_diff(
+    out_dir: &Path,
+    clean_identity: &ArchiveIdentity,
+    modded_identity: &ArchiveIdentity,
+    clean_entry_count: usize,
+    modded_entry_count: usize,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    scan: &ScanMetadata,
+    rules: &RulesMetadata,
+    changes: &[Change],
+    components: &[ComponentReport],
+    warnings: &[Warning],
+    keys_path: &Path,
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct DiffScanBlock<'a> {
+        mode: &'a str,
+        depth: usize,
+        clean: &'a ArchiveIdentity,
+        modded: &'a ArchiveIdentity,
+        keysPathProvided: bool,
+    }
+
+    #[derive(Serialize)]
+    struct DiffStats {
+        cleanEntries: usize,
+        moddedEntries: usize,
+        addedEntries: usize,
+        removedEntries: usize,
+        modifiedEntries: usize,
+        componentReports: usize,
+        warnings: usize,
+    }
+
+    #[derive(Serialize)]
+    struct CleanVsModdedDiff<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        scan: DiffScanBlock<'a>,
+        rules: &'a RulesMetadata,
+        stats: DiffStats,
+        warnings: &'a [Warning],
+        components: &'a [ComponentReport],
+        allChanges: &'a [Change],
+    }
+
+    let added = changes.iter().filter(|c| c.status == "added").count();
+    let removed = changes.iter().filter(|c| c.status == "removed").count();
+    let modified = changes.iter().filter(|c| c.status == "modified").count();
+
+    let report = CleanVsModdedDiff {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "clean_vs_modded_diff",
+        tool,
+        timing,
+        scan: DiffScanBlock {
+            mode: &scan.mode,
+            depth: scan.depth,
+            clean: clean_identity,
+            modded: modded_identity,
+            keysPathProvided: !keys_path.as_os_str().is_empty(),
+        },
+        rules,
+        stats: DiffStats {
+            cleanEntries: clean_entry_count,
+            moddedEntries: modded_entry_count,
+            addedEntries: added,
+            removedEntries: removed,
+            modifiedEntries: modified,
+            componentReports: components.len(),
+            warnings: warnings.len(),
+        },
+        warnings,
+        components,
+        allChanges: changes,
+    };
+
+    let json = serde_json::to_string_pretty(&report)?;
+    let out = out_dir.join("clean_vs_modded_diff.json");
+    fs::write(&out, json)?;
+    Ok(())
+}
+
+fn write_diff_summary(
+    out_dir: &Path,
+    baseline_dir: &Path,
+    clean_identity: &ArchiveIdentity,
+    modded_identity: &ArchiveIdentity,
+    clean_entry_count: usize,
+    modded_entry_count: usize,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    scan: &ScanMetadata,
+    warnings: &[Warning],
+    changes: &[Change],
+    components: &[ComponentReport],
+) -> Result<()> {
+    #[derive(Serialize)]
+    struct ComponentSummary {
+        id: String,
+        name: String,
+        status: String,
+        confidence: String,
+        fileCount: usize,
+    }
+
+    #[derive(Serialize)]
+    struct DiffSummaryStats {
+        cleanEntries: usize,
+        moddedEntries: usize,
+        addedEntries: usize,
+        removedEntries: usize,
+        modifiedEntries: usize,
+        totalChanges: usize,
+        componentReports: usize,
+        changedComponents: usize,
+        warnings: usize,
+    }
+
+    #[derive(Serialize)]
+    struct DiffSummaryIdentity<'a> {
+        archiveFileName: &'a str,
+        archiveSizeBytes: u64,
+        archiveSha256: &'a str,
+    }
+
+    #[derive(Serialize)]
+    struct DiffSummaryScan<'a> {
+        mode: &'a str,
+        depth: usize,
+        cleanBaseline: DiffSummaryIdentity<'a>,
+        moddedArchive: DiffSummaryIdentity<'a>,
+    }
+
+    #[derive(Serialize)]
+    struct DiffSummary<'a> {
+        schemaVersion: &'a str,
+        ok: bool,
+        artifactType: &'a str,
+        tool: &'a ToolMetadata,
+        timing: &'a Timing,
+        baselineDir: String,
+        scan: DiffSummaryScan<'a>,
+        stats: DiffSummaryStats,
+        componentsSummary: Vec<ComponentSummary>,
+        artifacts: Vec<String>,
+        warnings: &'a [Warning],
+    }
+
+    let added = changes.iter().filter(|c| c.status == "added").count();
+    let removed = changes.iter().filter(|c| c.status == "removed").count();
+    let modified = changes.iter().filter(|c| c.status == "modified").count();
+    let changed_components = components.iter().filter(|c| c.status == "changed").count();
+
+    let components_summary: Vec<ComponentSummary> = components
+        .iter()
+        .map(|c| ComponentSummary {
+            id: c.id.clone(),
+            name: c.name.clone(),
+            status: c.status.clone(),
+            confidence: c.confidence.clone(),
+            fileCount: c.files.len(),
+        })
+        .collect();
+
+    let summary = DiffSummary {
+        schemaVersion: SCHEMA_VERSION,
+        ok: true,
+        artifactType: "diff_summary",
+        tool,
+        timing,
+        baselineDir: baseline_dir.display().to_string(),
+        scan: DiffSummaryScan {
+            mode: &scan.mode,
+            depth: scan.depth,
+            cleanBaseline: DiffSummaryIdentity {
+                archiveFileName: &clean_identity.archiveFileName,
+                archiveSizeBytes: clean_identity.archiveSizeBytes,
+                archiveSha256: &clean_identity.archiveSha256,
+            },
+            moddedArchive: DiffSummaryIdentity {
+                archiveFileName: &modded_identity.archiveFileName,
+                archiveSizeBytes: modded_identity.archiveSizeBytes,
+                archiveSha256: &modded_identity.archiveSha256,
+            },
+        },
+        stats: DiffSummaryStats {
+            cleanEntries: clean_entry_count,
+            moddedEntries: modded_entry_count,
+            addedEntries: added,
+            removedEntries: removed,
+            modifiedEntries: modified,
+            totalChanges: changes.len(),
+            componentReports: components.len(),
+            changedComponents: changed_components,
+            warnings: warnings.len(),
+        },
+        componentsSummary: components_summary,
+        artifacts: vec![
+            "full_modded_manifest.json".to_string(),
+            "full_modded_tree.json".to_string(),
+            "clean_vs_modded_diff.json".to_string(),
+            "diff_summary.json".to_string(),
+        ],
+        warnings,
+    };
+
+    let out = out_dir.join("diff_summary.json");
+    let json = serde_json::to_string_pretty(&summary)?;
+    fs::write(&out, json)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2430,6 +2895,32 @@ mod tests {
         let h1 = compute_tree_fingerprint_sha256(&entries1);
         let h2 = compute_tree_fingerprint_sha256(&entries2);
         assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn load_baseline_manifest_round_trips_entries() {
+        // Extra fields like isTextCandidate must be gracefully ignored via Deserialize
+        let json = r#"{
+            "schemaVersion": "2.0",
+            "ok": true,
+            "artifactType": "full_clean_manifest",
+            "files": [
+                {
+                    "path": "common/data/weather.xml",
+                    "name": "weather.xml",
+                    "extension": "xml",
+                    "sizeBytes": 1024,
+                    "sha256": "abc123",
+                    "source": "test.rpf",
+                    "isTextCandidate": true,
+                    "isBinaryCandidate": false
+                }
+            ]
+        }"#;
+        let parsed: BaselineManifestFile = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.files.len(), 1);
+        assert_eq!(parsed.files[0].sizeBytes, 1024);
+        assert_eq!(parsed.files[0].extension, "xml");
     }
 }
 
@@ -2725,6 +3216,124 @@ fn main() -> Result<()> {
             for name in BASELINE_ARTIFACTS {
                 println!("  artifact: {}", name);
             }
+        }
+        "diff-against-baseline" => {
+            let tool = build_tool_metadata(&args);
+            let started_at = OffsetDateTime::now_utc();
+            let start_instant = Instant::now();
+            let modded = args.modded.clone().context("diff-against-baseline requires --modded")?;
+            let baseline_dir = args.baseline.clone().context("diff-against-baseline requires --baseline")?;
+            let keys_path = args.keys.clone().context("diff-against-baseline requires --keys")?;
+            let out_dir = args.out.clone().context("diff-against-baseline requires --out (output folder)")?;
+
+            fs::create_dir_all(&out_dir).with_context(|| {
+                format!("failed to create diff output dir: {}", out_dir.display())
+            })?;
+
+            // Load clean baseline
+            let clean_entries = load_baseline_manifest(&baseline_dir)?;
+            let baseline_meta = load_baseline_metadata_file(&baseline_dir)?;
+
+            let clean_identity = ArchiveIdentity {
+                archivePath: format!("(baseline: {})", baseline_dir.display()),
+                archiveFileName: baseline_meta.baselineArchiveFileName.clone(),
+                archiveSizeBytes: baseline_meta.baselineArchiveSizeBytes,
+                archiveSha256: baseline_meta.baselineArchiveHash.clone(),
+            };
+
+            // Scan modded archive in full mode with hashing
+            let modded_identity = build_archive_identity(&modded)?;
+            let keys = GtaKeys::load_from_path(&keys_path).with_context(|| {
+                format!("failed to load keys directory from {}", keys_path.display())
+            })?;
+
+            let mut warnings = Vec::new();
+            let rules = load_rules(&args, &mut warnings)?;
+
+            let scan_options = scan_options_for_mode(ScanMode::Full, true);
+            let scan = ScanMetadata {
+                mode: ScanMode::Full.as_str().to_string(),
+                depth: args.depth,
+            };
+
+            let (modded_entries, modded_counters) = scan_archive(
+                &modded,
+                &keys,
+                args.depth,
+                scan_options,
+                rules.target_rules.as_ref(),
+                &mut warnings,
+            )?;
+
+            let timing = Timing {
+                startedAt: format_timestamp(started_at)?,
+                finishedAt: format_timestamp(OffsetDateTime::now_utc())?,
+                durationMs: start_instant.elapsed().as_millis() as u64,
+            };
+
+            // Diff
+            let changes = diff_maps(&clean_entries, &modded_entries, rules.component_rules.as_ref());
+            let components = classify(&changes, rules.component_rules.as_ref());
+
+            let clean_entry_count = clean_entries.len();
+            let modded_entry_count = modded_entries.len();
+
+            write_full_modded_manifest(
+                &out_dir,
+                &modded_identity,
+                &keys_path,
+                &tool,
+                &timing,
+                &scan,
+                &rules.metadata,
+                &modded_entries,
+                &warnings,
+                &modded_counters,
+            )?;
+            write_full_modded_tree(&out_dir, &modded_identity, &tool, &scan, &modded_entries)?;
+            write_clean_vs_modded_diff(
+                &out_dir,
+                &clean_identity,
+                &modded_identity,
+                clean_entry_count,
+                modded_entry_count,
+                &tool,
+                &timing,
+                &scan,
+                &rules.metadata,
+                &changes,
+                &components,
+                &warnings,
+                &keys_path,
+            )?;
+            write_diff_summary(
+                &out_dir,
+                &baseline_dir,
+                &clean_identity,
+                &modded_identity,
+                clean_entry_count,
+                modded_entry_count,
+                &tool,
+                &timing,
+                &scan,
+                &warnings,
+                &changes,
+                &components,
+            )?;
+
+            let added = changes.iter().filter(|c| c.status == "added").count();
+            let removed = changes.iter().filter(|c| c.status == "removed").count();
+            let modified = changes.iter().filter(|c| c.status == "modified").count();
+
+            println!("diff-against-baseline complete");
+            println!("modded: {}", modded.display());
+            println!("baseline: {}", baseline_dir.display());
+            println!("clean entries: {}", clean_entry_count);
+            println!("modded entries: {}", modded_entry_count);
+            println!("added: {}", added);
+            println!("removed: {}", removed);
+            println!("modified: {}", modified);
+            println!("out: {}", out_dir.display());
         }
         _ => {
             usage();
