@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "weather_xml_report",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.8.1",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.8.1",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2026-05-27T12:00:00Z",
+    "finishedAt": "2026-05-27T12:00:01Z",
+    "durationMs": 1000
+  },
+  "generatedAt": "2026-05-27T12:00:01Z",
+  "weatherXmlFamily": [
+    {
+      "path": "w_foggy.xml",
+      "status": "modified",
+      "numericChanges": 18,
+      "colorLikeChanges": 25,
+      "confidence": "medium",
+      "suggestedPhase": "first_patch",
+      "note": "Fog-named weather file — candidate for fog or overcast color tuning."
+    },
+    {
+      "path": "w_clouds.xml",
+      "status": "modified",
+      "numericChanges": 10,
+      "colorLikeChanges": 30,
+      "confidence": "medium",
+      "suggestedPhase": "first_patch",
+      "note": "Cloud-named weather file — candidate for cloud or sky tint tuning."
+    }
+  ],
+  "globalWeatherXml": {
+    "path": "weather.xml",
+    "status": "modified",
+    "numericChanges": 50,
+    "colorLikeChanges": 6,
+    "confidence": "low",
+    "suggestedPhase": "deferred",
+    "note": "Global weather configuration candidate; likely touches multiple systems and should stay deferred until effect mapping is clearer."
+  },
+  "recommendations": {
+    "bestFirstCandidates": ["w_foggy.xml", "w_clouds.xml"],
+    "deferredFiles": ["weather.xml"],
+    "reason": "weather.xml may be a global or system-level config, so defer it until effect mapping is clearer."
+  }
+}

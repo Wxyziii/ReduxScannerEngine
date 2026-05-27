@@ -1,0 +1,80 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "timecycle_file_rankings",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.8.1",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.8.1",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2026-05-27T12:00:00Z",
+    "finishedAt": "2026-05-27T12:00:01Z",
+    "durationMs": 1000
+  },
+  "generatedAt": "2026-05-27T12:00:01Z",
+  "rankings": [
+    {
+      "pathOrFamily": "visualsettings.dat",
+      "rank": 1,
+      "category": "global_visual_settings",
+      "evidence": [
+        "4 changed keys and 12 numeric changes were detected.",
+        "1 sampled named key changes were readable."
+      ],
+      "confidence": "high",
+      "risk": "medium",
+      "recommendedPhase": "first_patch",
+      "safeForAiPlanning": true,
+      "safeForDirectEditing": false,
+      "recommendedTool": "dat_config_patcher"
+    },
+    {
+      "pathOrFamily": "cloudkeyframes.xml",
+      "rank": 2,
+      "category": "clouds_sky",
+      "evidence": [
+        "88 color-like changes and 42 numeric changes were detected.",
+        "Name suggests cloud and sky keyframes."
+      ],
+      "confidence": "high",
+      "risk": "medium",
+      "recommendedPhase": "first_patch",
+      "safeForAiPlanning": true,
+      "safeForDirectEditing": false,
+      "recommendedTool": "xml_cloudkeyframe_editor"
+    },
+    {
+      "pathOrFamily": "w_foggy.xml",
+      "rank": 3,
+      "category": "weather_fog",
+      "evidence": [
+        "25 color-like changes and 18 numeric changes were detected.",
+        "Fog-specific weather filename suggests a narrow validation target."
+      ],
+      "confidence": "medium",
+      "risk": "medium",
+      "recommendedPhase": "first_patch",
+      "safeForAiPlanning": true,
+      "safeForDirectEditing": false,
+      "recommendedTool": "xml_weather_editor"
+    },
+    {
+      "pathOrFamily": "timecycle_mods_3.xml",
+      "rank": 8,
+      "category": "schema_unknown",
+      "evidence": [
+        "95 numeric changes and 4 color-like changes were detected.",
+        "High numeric churn is a strong reason to defer until parameter mapping exists."
+      ],
+      "confidence": "medium",
+      "risk": "high",
+      "recommendedPhase": "defer",
+      "safeForAiPlanning": false,
+      "safeForDirectEditing": false,
+      "recommendedTool": "xml_timecycle_editor"
+    }
+  ]
+}

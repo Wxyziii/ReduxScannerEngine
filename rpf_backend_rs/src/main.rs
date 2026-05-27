@@ -3939,6 +3939,162 @@ struct AiChangeNote {
     question: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TimecycleFileRanking {
+    path_or_family: String,
+    rank: usize,
+    category: String,
+    evidence: Vec<String>,
+    confidence: String,
+    risk: String,
+    recommended_phase: String,
+    safe_for_ai_planning: bool,
+    safe_for_direct_editing: bool,
+    recommended_tool: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TimecycleFileRankingsReport {
+    schema_version: String,
+    ok: bool,
+    artifact_type: String,
+    tool: ToolMetadata,
+    timing: Timing,
+    generated_at: String,
+    rankings: Vec<TimecycleFileRanking>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SafeEditMatrixEntry {
+    file: String,
+    allowed_first_patch_operations: Vec<String>,
+    blocked_operations: Vec<String>,
+    deferred_operations: Vec<String>,
+    validator_checks: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TimecycleSafeEditMatrixReport {
+    schema_version: String,
+    ok: bool,
+    artifact_type: String,
+    tool: ToolMetadata,
+    timing: Timing,
+    generated_at: String,
+    entries: Vec<SafeEditMatrixEntry>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VisualsettingsKeyFamily {
+    family: String,
+    keys: Vec<String>,
+    sample_changes: Vec<KeyValueChange>,
+    risk: String,
+    safe_for_first_patch: bool,
+    hypothesis: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VisualsettingsKeyReport {
+    schema_version: String,
+    ok: bool,
+    artifact_type: String,
+    tool: ToolMetadata,
+    timing: Timing,
+    generated_at: String,
+    file: String,
+    status: String,
+    changed_key_count: usize,
+    numeric_changes: usize,
+    key_families: Vec<VisualsettingsKeyFamily>,
+    note: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CloudkeyframesReport {
+    schema_version: String,
+    ok: bool,
+    artifact_type: String,
+    tool: ToolMetadata,
+    timing: Timing,
+    generated_at: String,
+    file: String,
+    status: String,
+    numeric_changes: usize,
+    color_like_changes: usize,
+    color_only_pattern_detected: bool,
+    numeric_and_color_pattern: bool,
+    suggested_first_patch_operation: String,
+    blocked_until_schema_known: String,
+    evidence: Vec<String>,
+    confidence: String,
+    note: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WeatherXmlEntry {
+    path: String,
+    status: String,
+    numeric_changes: usize,
+    color_like_changes: usize,
+    confidence: String,
+    suggested_phase: String,
+    note: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WeatherXmlRecommendations {
+    best_first_candidates: Vec<String>,
+    deferred_files: Vec<String>,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WeatherXmlReport {
+    schema_version: String,
+    ok: bool,
+    artifact_type: String,
+    tool: ToolMetadata,
+    timing: Timing,
+    generated_at: String,
+    weather_xml_family: Vec<WeatherXmlEntry>,
+    global_weather_xml: WeatherXmlEntry,
+    recommendations: WeatherXmlRecommendations,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RiskyFileEntry {
+    file_or_family: String,
+    reason: String,
+    risk: String,
+    when_allowed: String,
+    required_tool: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RiskyFilesReport {
+    schema_version: String,
+    ok: bool,
+    artifact_type: String,
+    tool: ToolMetadata,
+    timing: Timing,
+    generated_at: String,
+    risky_files: Vec<RiskyFileEntry>,
+    note: String,
+}
+
 fn extract_text_bytes_for_paths(
     archive_path: &Path,
     keys: &GtaKeys,
@@ -6467,8 +6623,1615 @@ fn build_and_write_learning_corpus(
     Ok(())
 }
 
+fn timecycle_display_name(path: &str) -> String {
+    let base = basename(path);
+    if base.is_empty() {
+        normalize_path(path)
+    } else {
+        base
+    }
+}
+
+fn timecycle_coverage_percent(text_results: Option<&TextAnalysisResults>) -> f64 {
+    match text_results {
+        Some(results) if results.stats.totalCandidates > 0 => corpus_round_one_decimal(
+            (results.stats.analyzedFiles as f64 / results.stats.totalCandidates as f64) * 100.0,
+        ),
+        _ => 0.0,
+    }
+}
+
+fn find_xml_entry_by_name<'a>(
+    text_results: Option<&'a TextAnalysisResults>,
+    file_name: &str,
+) -> Option<&'a XmlDiffEntry> {
+    text_results.and_then(|results| {
+        results
+            .xml_entries
+            .iter()
+            .find(|entry| timecycle_display_name(&entry.path) == file_name)
+    })
+}
+
+fn find_dat_entry_by_name<'a>(
+    text_results: Option<&'a TextAnalysisResults>,
+    file_name: &str,
+) -> Option<&'a DatDiffEntry> {
+    text_results.and_then(|results| {
+        results
+            .dat_entries
+            .iter()
+            .find(|entry| timecycle_display_name(&entry.path) == file_name)
+    })
+}
+
+fn collect_weather_xml_entries<'a>(
+    text_results: Option<&'a TextAnalysisResults>,
+) -> Vec<&'a XmlDiffEntry> {
+    match text_results {
+        Some(results) => results
+            .xml_entries
+            .iter()
+            .filter(|entry| {
+                let name = timecycle_display_name(&entry.path);
+                name.starts_with("w_") && name.ends_with(".xml")
+            })
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+fn weather_file_priority(path: &str) -> usize {
+    match timecycle_display_name(path).as_str() {
+        "w_foggy.xml" => 0,
+        "w_clouds.xml" => 1,
+        _ => 2,
+    }
+}
+
+fn build_timecycle_file_rankings(
+    text_results: Option<&TextAnalysisResults>,
+) -> Vec<TimecycleFileRanking> {
+    let visual_entry = find_dat_entry_by_name(text_results, "visualsettings.dat");
+    let cloud_entry = find_xml_entry_by_name(text_results, "cloudkeyframes.xml");
+    let mods1_entry = find_xml_entry_by_name(text_results, "timecycle_mods_1.xml");
+    let foggy_entry = find_xml_entry_by_name(text_results, "w_foggy.xml");
+    let clouds_entry = find_xml_entry_by_name(text_results, "w_clouds.xml");
+    let mods4_entry = find_xml_entry_by_name(text_results, "timecycle_mods_4.xml");
+    let weather_entry = find_xml_entry_by_name(text_results, "weather.xml");
+    let mods3_entry = find_xml_entry_by_name(text_results, "timecycle_mods_3.xml");
+    let weather_family_entries = collect_weather_xml_entries(text_results);
+    let weather_family_numeric: usize = weather_family_entries
+        .iter()
+        .map(|entry| entry.numericChanges)
+        .sum();
+    let weather_family_color: usize = weather_family_entries
+        .iter()
+        .map(|entry| entry.colorLikeChanges)
+        .sum();
+
+    let mut ranked: Vec<(i32, TimecycleFileRanking)> = Vec::new();
+
+    {
+        let mut score = 960;
+        let mut evidence = vec![
+            "Filename suggests global visual settings with named parameters.".to_string(),
+        ];
+        let mut confidence = "low".to_string();
+        if let Some(entry) = visual_entry {
+            evidence.push(format!(
+                "{} changed keys and {} numeric changes were detected.",
+                entry.changedKeyCount, entry.numericChanges
+            ));
+            if !entry.sampleKeyChanges.is_empty() {
+                evidence.push(format!(
+                    "{} sampled named key changes were readable.",
+                    entry.sampleKeyChanges.len()
+                ));
+                score += 180;
+                confidence = "high".to_string();
+            } else {
+                evidence.push(
+                    "Named keys were not sampled, so parameter-level planning should stay narrow."
+                        .to_string(),
+                );
+                score += 40;
+                confidence = "medium".to_string();
+            }
+            if entry.readable {
+                score += 20;
+            }
+        } else {
+            evidence.push(
+                "File was not present in analyzed text results, so this rank remains heuristic."
+                    .to_string(),
+            );
+            score -= 650;
+        }
+        ranked.push((
+            score,
+            TimecycleFileRanking {
+                path_or_family: "visualsettings.dat".to_string(),
+                rank: 0,
+                category: "global_visual_settings".to_string(),
+                evidence,
+                confidence,
+                risk: "medium".to_string(),
+                recommended_phase: "first_patch".to_string(),
+                safe_for_ai_planning: true,
+                safe_for_direct_editing: false,
+                recommended_tool: "dat_config_patcher".to_string(),
+            },
+        ));
+    }
+
+    {
+        let mut score = 790;
+        let mut evidence = vec!["Name suggests cloud and sky keyframes.".to_string()];
+        let mut confidence = "low".to_string();
+        if let Some(entry) = cloud_entry {
+            evidence.push(format!(
+                "{} color-like changes and {} numeric changes were detected.",
+                entry.colorLikeChanges, entry.numericChanges
+            ));
+            if entry.colorLikeChanges > 0 && entry.numericChanges == 0 {
+                evidence.push("Only color-like changes were observed in the analyzed diff.".to_string());
+                confidence = "high".to_string();
+            } else if entry.colorLikeChanges > 0 {
+                evidence.push(
+                    "Color-like changes are present, but numeric edits mean schema-aware validation is still required."
+                        .to_string(),
+                );
+                confidence = "high".to_string();
+            } else if entry.numericChanges > 0 {
+                confidence = "medium".to_string();
+            }
+            score += (entry.colorLikeChanges.min(2500) / 18) as i32;
+            score += (entry.numericChanges.min(1200) / 35) as i32;
+        } else {
+            evidence.push(
+                "No analyzed cloudkeyframes entry was available; keep this as a likely candidate only."
+                    .to_string(),
+            );
+            score -= 520;
+        }
+        ranked.push((
+            score,
+            TimecycleFileRanking {
+                path_or_family: "cloudkeyframes.xml".to_string(),
+                rank: 0,
+                category: "clouds_sky".to_string(),
+                evidence,
+                confidence,
+                risk: "medium".to_string(),
+                recommended_phase: "first_patch".to_string(),
+                safe_for_ai_planning: true,
+                safe_for_direct_editing: false,
+                recommended_tool: "xml_cloudkeyframe_editor".to_string(),
+            },
+        ));
+    }
+
+    {
+        let mut score = 760;
+        let mut evidence = vec!["Primary timecycle mods file with a sky-oriented name.".to_string()];
+        let mut confidence = "low".to_string();
+        if let Some(entry) = mods1_entry {
+            evidence.push(format!(
+                "{} color-like changes and {} numeric changes were detected.",
+                entry.colorLikeChanges, entry.numericChanges
+            ));
+            if entry.colorLikeChanges >= entry.numericChanges && entry.colorLikeChanges > 0 {
+                evidence.push(
+                    "Color-like changes are at least as strong as numeric changes in this file."
+                        .to_string(),
+                );
+                confidence = "high".to_string();
+            } else if entry.numericChanges > 0 || entry.colorLikeChanges > 0 {
+                confidence = "medium".to_string();
+            }
+            score += (entry.colorLikeChanges.min(2000) / 22) as i32;
+            score += (entry.numericChanges.min(1500) / 40) as i32;
+        } else {
+            evidence.push(
+                "The file was not analyzed, so it stays high because of name relevance rather than proof."
+                    .to_string(),
+            );
+            score -= 480;
+        }
+        ranked.push((
+            score,
+            TimecycleFileRanking {
+                path_or_family: "timecycle_mods_1.xml".to_string(),
+                rank: 0,
+                category: "timecycle_core".to_string(),
+                evidence,
+                confidence,
+                risk: "medium".to_string(),
+                recommended_phase: "first_patch".to_string(),
+                safe_for_ai_planning: true,
+                safe_for_direct_editing: false,
+                recommended_tool: "xml_timecycle_editor".to_string(),
+            },
+        ));
+    }
+
+    {
+        let mut score = 700;
+        let mut evidence = vec!["Fog-specific weather filename suggests a narrow validation target.".to_string()];
+        let mut confidence = "low".to_string();
+        if let Some(entry) = foggy_entry {
+            evidence.push(format!(
+                "{} color-like changes and {} numeric changes were detected.",
+                entry.colorLikeChanges, entry.numericChanges
+            ));
+            if entry.colorLikeChanges > 0 || entry.numericChanges > 0 {
+                confidence = "medium".to_string();
+            }
+            score += (entry.colorLikeChanges.min(1200) / 22) as i32;
+            score += (entry.numericChanges.min(1200) / 45) as i32;
+        } else {
+            evidence.push(
+                "No analyzed w_foggy.xml entry was present, so rank is based on probable weather relevance."
+                    .to_string(),
+            );
+            score -= 430;
+        }
+        ranked.push((
+            score,
+            TimecycleFileRanking {
+                path_or_family: "w_foggy.xml".to_string(),
+                rank: 0,
+                category: "weather_fog".to_string(),
+                evidence,
+                confidence,
+                risk: "medium".to_string(),
+                recommended_phase: "first_patch".to_string(),
+                safe_for_ai_planning: true,
+                safe_for_direct_editing: false,
+                recommended_tool: "xml_weather_editor".to_string(),
+            },
+        ));
+    }
+
+    {
+        let mut score = 680;
+        let mut evidence = vec!["Cloud-named weather file suggests sky tint or cloud color relevance.".to_string()];
+        let mut confidence = "low".to_string();
+        if let Some(entry) = clouds_entry {
+            evidence.push(format!(
+                "{} color-like changes and {} numeric changes were detected.",
+                entry.colorLikeChanges, entry.numericChanges
+            ));
+            if entry.colorLikeChanges > 0 || entry.numericChanges > 0 {
+                confidence = "medium".to_string();
+            }
+            score += (entry.colorLikeChanges.min(1200) / 22) as i32;
+            score += (entry.numericChanges.min(1200) / 45) as i32;
+        } else {
+            evidence.push(
+                "No analyzed w_clouds.xml entry was present, so rank remains name-driven."
+                    .to_string(),
+            );
+            score -= 430;
+        }
+        ranked.push((
+            score,
+            TimecycleFileRanking {
+                path_or_family: "w_clouds.xml".to_string(),
+                rank: 0,
+                category: "weather_clouds".to_string(),
+                evidence,
+                confidence,
+                risk: "medium".to_string(),
+                recommended_phase: "first_patch".to_string(),
+                safe_for_ai_planning: true,
+                safe_for_direct_editing: false,
+                recommended_tool: "xml_weather_editor".to_string(),
+            },
+        ));
+    }
+
+    {
+        let mut score = 630;
+        let mut evidence = vec![
+            "Aggregated weather XML family can reveal repeated sky/fog patterns across multiple conditions."
+                .to_string(),
+        ];
+        let mut confidence = "low".to_string();
+        if !weather_family_entries.is_empty() {
+            evidence.push(format!(
+                "{} weather-family files were analyzed with {} color-like and {} numeric changes in total.",
+                weather_family_entries.len(), weather_family_color, weather_family_numeric
+            ));
+            confidence = if weather_family_color > 0 || weather_family_numeric > 0 {
+                "medium".to_string()
+            } else {
+                "low".to_string()
+            };
+            score += (weather_family_color.min(2000) / 30) as i32;
+            score += (weather_family_numeric.min(2000) / 60) as i32;
+        } else {
+            evidence.push(
+                "No weather-family XML files were available in analyzed text results."
+                    .to_string(),
+            );
+            score -= 420;
+        }
+        ranked.push((
+            score,
+            TimecycleFileRanking {
+                path_or_family: "w_*.xml family".to_string(),
+                rank: 0,
+                category: "weather_family".to_string(),
+                evidence,
+                confidence,
+                risk: "medium".to_string(),
+                recommended_phase: "first_patch".to_string(),
+                safe_for_ai_planning: true,
+                safe_for_direct_editing: false,
+                recommended_tool: "xml_weather_editor".to_string(),
+            },
+        ));
+    }
+
+    {
+        let mut score = 430;
+        let mut evidence = vec![
+            "Known linkage to kill-effect styling makes this file higher risk for an initial sky patch."
+                .to_string(),
+        ];
+        let mut confidence = "low".to_string();
+        if let Some(entry) = mods4_entry {
+            evidence.push(format!(
+                "{} color-like changes and {} numeric changes were detected.",
+                entry.colorLikeChanges, entry.numericChanges
+            ));
+            if entry.colorLikeChanges > 0 || entry.numericChanges > 0 {
+                confidence = "medium".to_string();
+            }
+            score += (entry.colorLikeChanges.min(1000) / 35) as i32;
+        } else {
+            evidence.push(
+                "No analyzed timecycle_mods_4.xml entry was present, so keep it deferred."
+                    .to_string(),
+            );
+            score -= 180;
+        }
+        ranked.push((
+            score,
+            TimecycleFileRanking {
+                path_or_family: "timecycle_mods_4.xml".to_string(),
+                rank: 0,
+                category: "kill_effect_linked".to_string(),
+                evidence,
+                confidence,
+                risk: "high".to_string(),
+                recommended_phase: "defer".to_string(),
+                safe_for_ai_planning: false,
+                safe_for_direct_editing: false,
+                recommended_tool: "xml_timecycle_editor".to_string(),
+            },
+        ));
+    }
+
+    {
+        let mut score = 300;
+        let mut evidence = vec![
+            "Global weather.xml may coordinate multiple systems and should stay deferred at first."
+                .to_string(),
+        ];
+        let mut confidence = "low".to_string();
+        if let Some(entry) = weather_entry {
+            evidence.push(format!(
+                "{} color-like changes and {} numeric changes were detected.",
+                entry.colorLikeChanges, entry.numericChanges
+            ));
+            if entry.colorLikeChanges > 0 || entry.numericChanges > 0 {
+                confidence = "medium".to_string();
+            }
+            score += (entry.colorLikeChanges.min(800) / 60) as i32;
+            score += (entry.numericChanges.min(800) / 80) as i32;
+        } else {
+            evidence.push(
+                "weather.xml was not present in analyzed text results, but it still remains globally risky."
+                    .to_string(),
+            );
+            score -= 60;
+        }
+        ranked.push((
+            score,
+            TimecycleFileRanking {
+                path_or_family: "weather.xml".to_string(),
+                rank: 0,
+                category: "global_weather".to_string(),
+                evidence,
+                confidence,
+                risk: "high".to_string(),
+                recommended_phase: "defer".to_string(),
+                safe_for_ai_planning: false,
+                safe_for_direct_editing: false,
+                recommended_tool: "xml_weather_editor".to_string(),
+            },
+        ));
+    }
+
+    {
+        let score = 180;
+        let mut evidence = vec![
+            "Schema is still unknown here, so any broad numeric edit would be unpredictable."
+                .to_string(),
+        ];
+        let mut confidence = "medium".to_string();
+        if let Some(entry) = mods3_entry {
+            evidence.push(format!(
+                "{} numeric changes and {} color-like changes were detected.",
+                entry.numericChanges, entry.colorLikeChanges
+            ));
+            evidence.push(
+                "High numeric churn is a strong reason to defer until parameter mapping exists."
+                    .to_string(),
+            );
+        } else {
+            evidence.push(
+                "No analyzed timecycle_mods_3.xml entry was present, but it remains a predefined risky file."
+                    .to_string(),
+            );
+            confidence = "low".to_string();
+        }
+        ranked.push((
+            score,
+            TimecycleFileRanking {
+                path_or_family: "timecycle_mods_3.xml".to_string(),
+                rank: 0,
+                category: "schema_unknown".to_string(),
+                evidence,
+                confidence,
+                risk: "high".to_string(),
+                recommended_phase: "defer".to_string(),
+                safe_for_ai_planning: false,
+                safe_for_direct_editing: false,
+                recommended_tool: "xml_timecycle_editor".to_string(),
+            },
+        ));
+    }
+
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.path_or_family.cmp(&b.1.path_or_family)));
+
+    ranked
+        .into_iter()
+        .enumerate()
+        .map(|(index, (_, mut ranking))| {
+            ranking.rank = index + 1;
+            ranking
+        })
+        .collect()
+}
+
+fn build_timecycle_safe_edit_matrix() -> Vec<SafeEditMatrixEntry> {
+    vec![
+        SafeEditMatrixEntry {
+            file: "cloudkeyframes.xml".to_string(),
+            allowed_first_patch_operations: vec![
+                "color_like_desaturation".to_string(),
+                "color_like_darken".to_string(),
+            ],
+            blocked_operations: vec![
+                "mass_numeric_edit".to_string(),
+                "node_deletion".to_string(),
+                "whole_file_replacement".to_string(),
+            ],
+            deferred_operations: vec!["density_or_shape_numeric_edits".to_string()],
+            validator_checks: vec![
+                "xml_parse_ok".to_string(),
+                "no_unexpected_node_deletion".to_string(),
+                "only_color_attributes_changed".to_string(),
+            ],
+        },
+        SafeEditMatrixEntry {
+            file: "timecycle_mods_1.xml".to_string(),
+            allowed_first_patch_operations: vec![
+                "color_like_desaturation".to_string(),
+                "color_like_darken".to_string(),
+            ],
+            blocked_operations: vec![
+                "mass_numeric_edit".to_string(),
+                "node_deletion".to_string(),
+                "whole_file_replacement".to_string(),
+            ],
+            deferred_operations: vec!["unmapped_numeric_parameter_edits".to_string()],
+            validator_checks: vec![
+                "xml_parse_ok".to_string(),
+                "no_unexpected_node_deletion".to_string(),
+                "only_targeted_color_values_changed".to_string(),
+            ],
+        },
+        SafeEditMatrixEntry {
+            file: "timecycle_mods_3.xml".to_string(),
+            allowed_first_patch_operations: vec![],
+            blocked_operations: vec![
+                "mass_numeric_edit".to_string(),
+                "node_deletion".to_string(),
+                "whole_file_replacement".to_string(),
+                "schema_unknown_parameter_edit".to_string(),
+            ],
+            deferred_operations: vec!["all_operations_until_schema_known".to_string()],
+            validator_checks: vec![
+                "schema_mapping_required".to_string(),
+                "parameter_range_validation_required".to_string(),
+            ],
+        },
+        SafeEditMatrixEntry {
+            file: "timecycle_mods_4.xml".to_string(),
+            allowed_first_patch_operations: vec![
+                "color_like_desaturation".to_string(),
+                "color_like_darken".to_string(),
+            ],
+            blocked_operations: vec![
+                "mass_numeric_edit".to_string(),
+                "whole_file_replacement".to_string(),
+            ],
+            deferred_operations: vec!["kill_effect_linked_numeric_edits".to_string()],
+            validator_checks: vec![
+                "xml_parse_ok".to_string(),
+                "kill_effect_component_reviewed".to_string(),
+            ],
+        },
+        SafeEditMatrixEntry {
+            file: "visualsettings.dat".to_string(),
+            allowed_first_patch_operations: vec![
+                "named_key_edit_one_at_a_time".to_string(),
+                "small_numeric_delta_on_named_key".to_string(),
+            ],
+            blocked_operations: vec![
+                "mass_line_replacement".to_string(),
+                "whole_file_replacement".to_string(),
+                "multi_family_batch_edit".to_string(),
+            ],
+            deferred_operations: vec!["unknown_key_family_edits".to_string()],
+            validator_checks: vec![
+                "preserve_dat_formatting".to_string(),
+                "changed_keys_are_named".to_string(),
+                "one_family_per_patch".to_string(),
+            ],
+        },
+        SafeEditMatrixEntry {
+            file: "w_foggy.xml".to_string(),
+            allowed_first_patch_operations: vec![
+                "color_like_desaturation".to_string(),
+                "color_like_darken".to_string(),
+            ],
+            blocked_operations: vec![
+                "mass_numeric_edit".to_string(),
+                "whole_file_replacement".to_string(),
+            ],
+            deferred_operations: vec!["fog_density_numeric_edits".to_string()],
+            validator_checks: vec![
+                "xml_parse_ok".to_string(),
+                "only_color_attributes_changed".to_string(),
+            ],
+        },
+        SafeEditMatrixEntry {
+            file: "w_clouds.xml".to_string(),
+            allowed_first_patch_operations: vec![
+                "color_like_desaturation".to_string(),
+                "color_like_darken".to_string(),
+            ],
+            blocked_operations: vec![
+                "mass_numeric_edit".to_string(),
+                "whole_file_replacement".to_string(),
+            ],
+            deferred_operations: vec!["cloud_density_numeric_edits".to_string()],
+            validator_checks: vec![
+                "xml_parse_ok".to_string(),
+                "only_color_attributes_changed".to_string(),
+            ],
+        },
+        SafeEditMatrixEntry {
+            file: "weather.xml".to_string(),
+            allowed_first_patch_operations: vec![],
+            blocked_operations: vec![
+                "mass_numeric_edit".to_string(),
+                "whole_file_replacement".to_string(),
+                "global_weather_rewire".to_string(),
+            ],
+            deferred_operations: vec!["all_operations_until_global_mapping_known".to_string()],
+            validator_checks: vec![
+                "global_weather_review_required".to_string(),
+                "cross_file_validation_required".to_string(),
+            ],
+        },
+    ]
+}
+
+fn visualsettings_family_for_key(key: &str) -> &'static str {
+    let lower = key.to_ascii_lowercase();
+    if lower.starts_with("adaptation.") {
+        "Adaptation"
+    } else if lower.starts_with("tonemapping.") {
+        "Tonemapping"
+    } else if lower.starts_with("adaptivedof.") {
+        "adaptivedof"
+    } else if lower.starts_with("bloom.") {
+        "bloom"
+    } else if lower.starts_with("fog.") {
+        "fog"
+    } else if lower.starts_with("exposure.") {
+        "exposure"
+    } else {
+        "unknown"
+    }
+}
+
+fn visualsettings_family_profile(family: &str) -> (&'static str, bool, &'static str) {
+    match family {
+        "Adaptation" => (
+            "medium",
+            true,
+            "Key family name suggests adaptation-related tuning — unconfirmed.",
+        ),
+        "Tonemapping" => (
+            "medium",
+            true,
+            "Key family name suggests tonemapping-related tuning — unconfirmed.",
+        ),
+        "adaptivedof" => (
+            "medium",
+            false,
+            "Key family name suggests adaptive DOF-related tuning — unconfirmed.",
+        ),
+        "bloom" => (
+            "medium",
+            true,
+            "Key family name suggests bloom-related tuning — unconfirmed.",
+        ),
+        "fog" => (
+            "medium",
+            true,
+            "Key family name suggests fog-related tuning — unconfirmed.",
+        ),
+        "exposure" => (
+            "medium",
+            true,
+            "Key family name suggests exposure-related tuning — unconfirmed.",
+        ),
+        _ => (
+            "high",
+            false,
+            "Key family could not be mapped from the sampled key names — unconfirmed.",
+        ),
+    }
+}
+
+fn build_visualsettings_key_report(
+    text_results: Option<&TextAnalysisResults>,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    generated_at: &str,
+) -> VisualsettingsKeyReport {
+    let entry = find_dat_entry_by_name(text_results, "visualsettings.dat");
+    let mut key_families = Vec::new();
+
+    if let Some(entry) = entry {
+        let mut families: BTreeMap<String, VisualsettingsKeyFamily> = BTreeMap::new();
+        for change in &entry.sampleKeyChanges {
+            let family_name = visualsettings_family_for_key(&change.key).to_string();
+            let (risk, safe_for_first_patch, hypothesis) =
+                visualsettings_family_profile(&family_name);
+            let family = families
+                .entry(family_name.clone())
+                .or_insert_with(|| VisualsettingsKeyFamily {
+                    family: family_name.clone(),
+                    keys: Vec::new(),
+                    sample_changes: Vec::new(),
+                    risk: risk.to_string(),
+                    safe_for_first_patch,
+                    hypothesis: hypothesis.to_string(),
+                });
+            if !family.keys.contains(&change.key) {
+                family.keys.push(change.key.clone());
+            }
+            family.sample_changes.push(change.clone());
+        }
+        key_families = families.into_values().collect();
+        key_families.sort_by(|a, b| a.family.cmp(&b.family));
+        for family in &mut key_families {
+            family.keys.sort();
+            family.keys.dedup();
+        }
+    }
+
+    VisualsettingsKeyReport {
+        schema_version: SCHEMA_VERSION.to_string(),
+        ok: true,
+        artifact_type: "visualsettings_key_report".to_string(),
+        tool: tool.clone(),
+        timing: timing.clone(),
+        generated_at: generated_at.to_string(),
+        file: "visualsettings.dat".to_string(),
+        status: entry
+            .map(|item| item.status.clone())
+            .unwrap_or_else(|| "missing".to_string()),
+        changed_key_count: entry.map(|item| item.changedKeyCount).unwrap_or(0),
+        numeric_changes: entry.map(|item| item.numericChanges).unwrap_or(0),
+        key_families,
+        note: "Key meanings are hypotheses only. Do not invent parameter meanings not present in key names."
+            .to_string(),
+    }
+}
+
+fn build_cloudkeyframes_report(
+    text_results: Option<&TextAnalysisResults>,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    generated_at: &str,
+) -> CloudkeyframesReport {
+    let entry = find_xml_entry_by_name(text_results, "cloudkeyframes.xml");
+    let numeric_changes = entry.map(|item| item.numericChanges).unwrap_or(0);
+    let color_like_changes = entry.map(|item| item.colorLikeChanges).unwrap_or(0);
+    let mut evidence = Vec::new();
+
+    if let Some(entry) = entry {
+        evidence.push(format!(
+            "{} color-like changes were detected.",
+            entry.colorLikeChanges
+        ));
+        evidence.push(format!(
+            "{} numeric changes were detected.",
+            entry.numericChanges
+        ));
+        if entry.numericChanges == 0 && entry.colorLikeChanges > 0 {
+            evidence.push("Current diff looks color-only in the analyzed sample.".to_string());
+        } else if entry.numericChanges > 0 && entry.colorLikeChanges > 0 {
+            evidence.push(
+                "Both numeric and color-like deltas are present, so schema-aware review is still required."
+                    .to_string(),
+            );
+        }
+    } else {
+        evidence.push(
+            "No analyzed cloudkeyframes.xml entry was available, so this report is a placeholder only."
+                .to_string(),
+        );
+    }
+
+    let color_only_pattern_detected = numeric_changes == 0 && color_like_changes > 0;
+    let numeric_and_color_pattern = numeric_changes > 0 && color_like_changes > 0;
+    let confidence = if color_only_pattern_detected {
+        "high"
+    } else if color_like_changes > 0 || numeric_changes > 0 {
+        "medium"
+    } else {
+        "low"
+    };
+
+    CloudkeyframesReport {
+        schema_version: SCHEMA_VERSION.to_string(),
+        ok: true,
+        artifact_type: "cloudkeyframes_report".to_string(),
+        tool: tool.clone(),
+        timing: timing.clone(),
+        generated_at: generated_at.to_string(),
+        file: "cloudkeyframes.xml".to_string(),
+        status: entry
+            .map(|item| item.status.clone())
+            .unwrap_or_else(|| "not_found".to_string()),
+        numeric_changes,
+        color_like_changes,
+        color_only_pattern_detected,
+        numeric_and_color_pattern,
+        suggested_first_patch_operation: "color_like_values_only".to_string(),
+        blocked_until_schema_known: "numeric_mass_edit".to_string(),
+        evidence,
+        confidence: confidence.to_string(),
+        note: if color_only_pattern_detected {
+            "Color-like deltas make this a likely first-patch candidate, but exact visual meaning still requires in-game validation."
+                .to_string()
+        } else {
+            "Mixed numeric and color-like deltas make this a useful planning target, but direct editing should remain conservative."
+                .to_string()
+        },
+    }
+}
+
+fn weather_xml_entry_from_xml(entry: &XmlDiffEntry) -> WeatherXmlEntry {
+    let name = timecycle_display_name(&entry.path);
+    let suggested_phase = if name == "weather.xml" {
+        "deferred"
+    } else if name == "w_foggy.xml" || name == "w_clouds.xml" {
+        "first_patch"
+    } else {
+        "candidate_followup"
+    };
+    let confidence = if name == "weather.xml" {
+        "low"
+    } else if entry.numericChanges > 0 || entry.colorLikeChanges > 0 {
+        "medium"
+    } else {
+        "low"
+    };
+    let note = if name == "weather.xml" {
+        "Global weather configuration candidate; likely touches multiple systems and should stay deferred until effect mapping is clearer."
+            .to_string()
+    } else if name.contains("fog") {
+        "Fog-named weather file — candidate for fog or overcast color tuning."
+            .to_string()
+    } else if name.contains("cloud") {
+        "Cloud-named weather file — candidate for cloud or sky tint tuning."
+            .to_string()
+    } else {
+        "Weather-family file with readable diffs; treat as a possible follow-up after safer color-only validation."
+            .to_string()
+    };
+
+    WeatherXmlEntry {
+        path: name,
+        status: entry.status.clone(),
+        numeric_changes: entry.numericChanges,
+        color_like_changes: entry.colorLikeChanges,
+        confidence: confidence.to_string(),
+        suggested_phase: suggested_phase.to_string(),
+        note,
+    }
+}
+
+fn missing_weather_xml_entry(path: &str) -> WeatherXmlEntry {
+    WeatherXmlEntry {
+        path: path.to_string(),
+        status: "not_found".to_string(),
+        numeric_changes: 0,
+        color_like_changes: 0,
+        confidence: "low".to_string(),
+        suggested_phase: if path == "weather.xml" {
+            "deferred".to_string()
+        } else {
+            "candidate_followup".to_string()
+        },
+        note: if path == "weather.xml" {
+            "Global weather configuration remains deferred even when analyzer data is missing."
+                .to_string()
+        } else {
+            "No analyzed weather-family entry was available; keep this as a placeholder only."
+                .to_string()
+        },
+    }
+}
+
+fn build_weather_xml_report(
+    text_results: Option<&TextAnalysisResults>,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    generated_at: &str,
+) -> WeatherXmlReport {
+    let mut weather_xml_family: Vec<WeatherXmlEntry> = collect_weather_xml_entries(text_results)
+        .into_iter()
+        .map(weather_xml_entry_from_xml)
+        .collect();
+    weather_xml_family.sort_by(|a, b| {
+        weather_file_priority(&a.path)
+            .cmp(&weather_file_priority(&b.path))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+
+    let global_weather_xml = find_xml_entry_by_name(text_results, "weather.xml")
+        .map(weather_xml_entry_from_xml)
+        .unwrap_or_else(|| missing_weather_xml_entry("weather.xml"));
+
+    let mut best_first_candidates = weather_xml_family
+        .iter()
+        .filter(|entry| entry.suggested_phase == "first_patch")
+        .map(|entry| entry.path.clone())
+        .take(2)
+        .collect::<Vec<_>>();
+    if best_first_candidates.is_empty() {
+        best_first_candidates = weather_xml_family
+            .iter()
+            .map(|entry| entry.path.clone())
+            .take(2)
+            .collect();
+    }
+
+    WeatherXmlReport {
+        schema_version: SCHEMA_VERSION.to_string(),
+        ok: true,
+        artifact_type: "weather_xml_report".to_string(),
+        tool: tool.clone(),
+        timing: timing.clone(),
+        generated_at: generated_at.to_string(),
+        weather_xml_family,
+        global_weather_xml,
+        recommendations: WeatherXmlRecommendations {
+            best_first_candidates,
+            deferred_files: vec!["weather.xml".to_string()],
+            reason: "weather.xml may be a global or system-level config, so defer it until effect mapping is clearer."
+                .to_string(),
+        },
+    }
+}
+
+fn build_risky_files_report(
+    tool: &ToolMetadata,
+    timing: &Timing,
+    generated_at: &str,
+) -> RiskyFilesReport {
+    RiskyFilesReport {
+        schema_version: SCHEMA_VERSION.to_string(),
+        ok: true,
+        artifact_type: "risky_files_report".to_string(),
+        tool: tool.clone(),
+        timing: timing.clone(),
+        generated_at: generated_at.to_string(),
+        risky_files: vec![
+            RiskyFileEntry {
+                file_or_family: "timecycle_mods_3.xml".to_string(),
+                reason: "High numeric churn with unknown schema means a mass edit would be unpredictable.".to_string(),
+                risk: "high".to_string(),
+                when_allowed: "After xml_timecycle_editor maps parameter names, ranges, and validation rules."
+                    .to_string(),
+                required_tool: "xml_timecycle_editor with parameter-name mapping".to_string(),
+            },
+            RiskyFileEntry {
+                file_or_family: "weather.xml".to_string(),
+                reason: "Global weather configuration may coordinate multiple systems, so it should stay deferred at first."
+                    .to_string(),
+                risk: "high".to_string(),
+                when_allowed: "After cross-file weather effects are mapped and validated."
+                    .to_string(),
+                required_tool: "xml_weather_editor with global validation".to_string(),
+            },
+            RiskyFileEntry {
+                file_or_family: "timecycle_mods_4.xml".to_string(),
+                reason: "This file is linked to kill_effect behavior, so even apparently visual edits may have side effects."
+                    .to_string(),
+                risk: "high".to_string(),
+                when_allowed: "After kill_effect-linked parameters are isolated from sky-only parameters."
+                    .to_string(),
+                required_tool: "xml_timecycle_editor with component guardrails".to_string(),
+            },
+            RiskyFileEntry {
+                file_or_family: "*.ypt / *.ytd / *.ysc / *.gfx / *.fxc".to_string(),
+                reason: "Binary files are outside the current readable text analyzers and should not be edited from these reports."
+                    .to_string(),
+                risk: "high".to_string(),
+                when_allowed: "After dedicated binary analyzers exist for each family."
+                    .to_string(),
+                required_tool: "family-specific binary analyzers".to_string(),
+            },
+            RiskyFileEntry {
+                file_or_family: "hit_effect component".to_string(),
+                reason: "This component is outside the initial sky/timecycle patch scope.".to_string(),
+                risk: "high".to_string(),
+                when_allowed: "After sky/timecycle work is validated separately.".to_string(),
+                required_tool: "component-specific effect editor".to_string(),
+            },
+            RiskyFileEntry {
+                file_or_family: "tracer component".to_string(),
+                reason: "Tracer changes are unrelated to sky/timecycle and should not be mixed into a first patch."
+                    .to_string(),
+                risk: "high".to_string(),
+                when_allowed: "After timecycle-only validation is complete.".to_string(),
+                required_tool: "component-specific effect editor".to_string(),
+            },
+            RiskyFileEntry {
+                file_or_family: "minimap_hud component".to_string(),
+                reason: "HUD or minimap edits are unrelated to sky/timecycle planning and would add noise."
+                    .to_string(),
+                risk: "high".to_string(),
+                when_allowed: "After a separate HUD-focused pass is planned.".to_string(),
+                required_tool: "ui or gfx analyzer".to_string(),
+            },
+            RiskyFileEntry {
+                file_or_family: "kill_effect component".to_string(),
+                reason: "Kill-effect visuals are outside the first sky/timecycle patch scope.".to_string(),
+                risk: "high".to_string(),
+                when_allowed: "After sky-only parameters are validated independently.".to_string(),
+                required_tool: "component-specific effect editor".to_string(),
+            },
+        ],
+        note: "These entries are planning guardrails only. They do not prove a file is unsafe forever; they mean the current analyzer data is insufficient for a first edit pass."
+            .to_string(),
+    }
+}
+
+fn timecycle_safe_first_patch_candidates<'a>(
+    rankings: &'a [TimecycleFileRanking],
+) -> Vec<&'a TimecycleFileRanking> {
+    rankings
+        .iter()
+        .filter(|entry| entry.recommended_phase == "first_patch" && entry.safe_for_ai_planning)
+        .collect()
+}
+
+fn timecycle_scope_note_for_file(file: &str) -> &'static str {
+    match file {
+        "visualsettings.dat" => "Prefer one named key or one small key family at a time.",
+        "cloudkeyframes.xml" => "Stay with color-like desaturation or darkening only for the first pass.",
+        "timecycle_mods_1.xml" => "Restrict the first patch to clearly color-like values until schema mapping improves.",
+        "w_foggy.xml" | "w_clouds.xml" => {
+            "Prefer color-only weather tint changes; defer density-style numeric edits."
+        }
+        "w_*.xml family" => "Use the family only for repeated-pattern planning, not for broad direct edits.",
+        _ => "Keep the patch narrow and validation-heavy.",
+    }
+}
+
+fn timecycle_tool_list(rankings: &[TimecycleFileRanking]) -> Vec<String> {
+    let mut tools = BTreeSet::new();
+    for ranking in rankings {
+        if !ranking.recommended_tool.trim().is_empty() {
+            tools.insert(ranking.recommended_tool.clone());
+        }
+    }
+    tools.insert("xml parser / structural diff validator".to_string());
+    tools.insert("in-game screenshot or capture validation".to_string());
+    tools.into_iter().collect()
+}
+
+fn timecycle_validation_rules() -> Vec<&'static str> {
+    vec![
+        "Keep each patch to one file or one named key family at a time.",
+        "Require parse success after every edit and reject unexpected node or line deletion.",
+        "Validate in-game before claiming exact visual outcomes.",
+        "Do not batch unrelated components such as tracer, hit_effect, minimap_hud, or kill_effect into the same patch.",
+    ]
+}
+
+fn timecycle_evidence_lines(text_results: Option<&TextAnalysisResults>) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    if let Some(entry) = find_dat_entry_by_name(text_results, "visualsettings.dat") {
+        lines.push(format!(
+            "`visualsettings.dat`: changedKeyCount={}, numericChanges={}, sampledKeys={}",
+            entry.changedKeyCount,
+            entry.numericChanges,
+            entry.sampleKeyChanges.len()
+        ));
+    }
+
+    for name in [
+        "cloudkeyframes.xml",
+        "timecycle_mods_1.xml",
+        "timecycle_mods_3.xml",
+        "timecycle_mods_4.xml",
+        "w_foggy.xml",
+        "w_clouds.xml",
+        "weather.xml",
+    ] {
+        if let Some(entry) = find_xml_entry_by_name(text_results, name) {
+            lines.push(format!(
+                "`{}`: numericChanges={}, colorLikeChanges={}, addedLines={}, removedLines={}",
+                name,
+                entry.numericChanges,
+                entry.colorLikeChanges,
+                entry.addedLines,
+                entry.removedLines
+            ));
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(
+            "No analyzed sky/timecycle text entries were available; rankings fall back to cautious filename heuristics."
+                .to_string(),
+        );
+    }
+
+    lines
+}
+
+fn render_timecycle_strategy_report(
+    text_results: Option<&TextAnalysisResults>,
+    rankings: &[TimecycleFileRanking],
+    risky_files: &[RiskyFileEntry],
+    tool: &ToolMetadata,
+    generated_at: &str,
+) -> String {
+    let coverage = timecycle_coverage_percent(text_results);
+    let scan_summary = match text_results {
+        Some(results) => format!(
+            "- generated at: {}\n- scanner: {} {}\n- analyzed text files: {} of {} candidates ({:.1}% coverage)\n- xml/dat/meta/generic analyzed: {}/{}/{}/{}\n- focus: sky and timecycle candidate planning only; all conclusions remain hypotheses until in-game validation.",
+            generated_at,
+            tool.name,
+            tool.version,
+            results.stats.analyzedFiles,
+            results.stats.totalCandidates,
+            coverage,
+            results.stats.xmlAnalyzed,
+            results.stats.datAnalyzed,
+            results.stats.metaAnalyzed,
+            results.stats.genericTextAnalyzed,
+        ),
+        None => format!(
+            "- generated at: {}\n- scanner: {} {}\n- text analysis was not available, so this report uses only filename-level heuristics.\n- focus: likely sky/timecycle files only; every recommendation is tentative.",
+            generated_at, tool.name, tool.version
+        ),
+    };
+    let strongest = rankings
+        .iter()
+        .take(5)
+        .map(|entry| {
+            format!(
+                "- `{}` — confidence: {}, phase: {}, evidence: {}",
+                entry.path_or_family,
+                entry.confidence,
+                entry.recommended_phase,
+                entry.evidence.join("; ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let safe_candidates = timecycle_safe_first_patch_candidates(rankings)
+        .into_iter()
+        .take(5)
+        .map(|entry| {
+            format!(
+                "- `{}` — {}",
+                entry.path_or_family,
+                timecycle_scope_note_for_file(&entry.path_or_family)
+            )
+        })
+        .collect::<Vec<_>>();
+    let safe_candidates_text = if safe_candidates.is_empty() {
+        "- No safe first-patch candidates were confirmed by analyzer data.".to_string()
+    } else {
+        safe_candidates.join("\n")
+    };
+    let risky_text = risky_files
+        .iter()
+        .map(|entry| {
+            format!(
+                "- `{}` — {} (required tool: {})",
+                entry.file_or_family, entry.reason, entry.required_tool
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let evidence_text = timecycle_evidence_lines(text_results)
+        .into_iter()
+        .map(|line| format!("- {}", line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let recommended_scope = timecycle_safe_first_patch_candidates(rankings)
+        .into_iter()
+        .take(3)
+        .map(|entry| format!("- `{}` — {}", entry.path_or_family, entry.category))
+        .collect::<Vec<_>>();
+    let recommended_scope_text = if recommended_scope.is_empty() {
+        "- Start with a manual review pass before proposing any patch.".to_string()
+    } else {
+        format!(
+            "Begin with one of the following narrow candidates, validate it in-game, then expand only if the result is stable:\n{}",
+            recommended_scope.join("\n")
+        )
+    };
+    let validation_text = timecycle_validation_rules()
+        .into_iter()
+        .map(|line| format!("- {}", line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ai_may = [
+        "Infer relative priority between likely sky/timecycle files.",
+        "Suggest candidate-first patch scopes that stay narrow and reversible.",
+        "Use named key prefixes from visualsettings.dat as hypotheses only.",
+    ]
+    .iter()
+    .map(|line| format!("- {}", line))
+    .collect::<Vec<_>>()
+    .join("\n");
+    let ai_must_not = [
+        "Invent exact parameter meanings that are not present in the key or file names.",
+        "Claim exact visual outcomes without validation screenshots or gameplay review.",
+        "Propose whole-file replacement, schema-blind mass edits, or binary file editing from this report alone.",
+    ]
+    .iter()
+    .map(|line| format!("- {}", line))
+    .collect::<Vec<_>>()
+    .join("\n");
+    let tool_text = timecycle_tool_list(rankings)
+        .into_iter()
+        .map(|tool_name| format!("- {}", tool_name))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "# Timecycle Strategy Report\n\n## Overview\n{}\n\n## Strongest timecycle candidates\n{}\n\n## Safest first-patch candidates\n{}\n\n## Risky/deferred files\n{}\n\n## Evidence from scanner data\n{}\n\n## Recommended first patch scope\n{}\n\n## Validation requirements\n{}\n\n## What AI may infer vs must not infer\n### AI may infer\n{}\n\n### AI must not infer\n{}\n\n## Deterministic tools needed\n{}\n\nGenerated locally by Redux Scanner Engine. Treat every recommendation as a likely or possible candidate that still requires in-game validation.\n",
+        scan_summary,
+        strongest,
+        safe_candidates_text,
+        risky_text,
+        evidence_text,
+        recommended_scope_text,
+        validation_text,
+        ai_may,
+        ai_must_not,
+        tool_text,
+    )
+}
+
+fn render_ai_timecycle_context_compact(
+    text_results: Option<&TextAnalysisResults>,
+    rankings: &[TimecycleFileRanking],
+    risky_files: &[RiskyFileEntry],
+    tool: &ToolMetadata,
+    generated_at: &str,
+) -> String {
+    let coverage = timecycle_coverage_percent(text_results);
+    let scan_summary = match text_results {
+        Some(results) => format!(
+            "Generated at {} by {} {} using schema {}. The scanner compared clean-versus-modded inputs and analyzed {} of {} readable text candidates ({:.1}% coverage). XML/DAT/META/generic analyzer counts were {}/{}/{}/{}. This context is intentionally narrow: it highlights likely sky and timecycle files, records deterministic evidence such as numeric and color-like change counts, and avoids any claim that a file definitely controls a specific in-game effect.\n\nThe purpose of this file is planning, not editing. A small or cheap AI model should treat every recommendation below as a candidate or hypothesis. Use it to decide which file to inspect first, which files to defer, and what validation gates must be satisfied before a patch plan is trusted.",
+            generated_at,
+            tool.name,
+            tool.version,
+            SCHEMA_VERSION,
+            results.stats.analyzedFiles,
+            results.stats.totalCandidates,
+            coverage,
+            results.stats.xmlAnalyzed,
+            results.stats.datAnalyzed,
+            results.stats.metaAnalyzed,
+            results.stats.genericTextAnalyzed,
+        ),
+        None => format!(
+            "Generated at {} by {} {} using schema {}. Text analysis data was not available, so this context falls back to filename-level heuristics and hard safety rules. That means the ranked files below are still useful for planning, but every proposed edit idea must remain conservative and should be rechecked once analyzer output exists.\n\nThis file is still valuable for cheap AI models because it explains the allowed scope, blocked scope, and the validation mindset expected by the scanner project.",
+            generated_at, tool.name, tool.version, SCHEMA_VERSION
+        ),
+    };
+    let key_findings = rankings
+        .iter()
+        .take(7)
+        .map(|entry| {
+            format!(
+                "- `{}`: confidence={}, phase={}, evidence={}.",
+                entry.path_or_family,
+                entry.confidence,
+                entry.recommended_phase,
+                entry.evidence.join("; ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ranked_candidates = rankings
+        .iter()
+        .map(|entry| {
+            format!(
+                "{}. `{}` — category: {}, confidence: {}, recommended phase: {}, tool: {}. {}",
+                entry.rank,
+                entry.path_or_family,
+                entry.category,
+                entry.confidence,
+                entry.recommended_phase,
+                entry.recommended_tool,
+                timecycle_scope_note_for_file(&entry.path_or_family)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let safe_scope = timecycle_safe_first_patch_candidates(rankings)
+        .into_iter()
+        .take(5)
+        .map(|entry| {
+            format!(
+                "- `{}` — {} Confidence is {} and direct editing should still stay narrow.",
+                entry.path_or_family,
+                timecycle_scope_note_for_file(&entry.path_or_family),
+                entry.confidence
+            )
+        })
+        .collect::<Vec<_>>();
+    let safe_scope_text = if safe_scope.is_empty() {
+        "- No file was confirmed as a safe first-patch candidate; stay in review-only mode.".to_string()
+    } else {
+        format!(
+            "These are the best candidates for planning a first patch because they combine sky/timecycle relevance with relatively readable evidence. Even here, the first patch should remain color-focused or single-key-focused.\n{}",
+            safe_scope.join("\n")
+        )
+    };
+    let risky_text = risky_files
+        .iter()
+        .map(|entry| {
+            format!(
+                "- `{}` — {} Allowed later: {} Required tool: {}.",
+                entry.file_or_family, entry.reason, entry.when_allowed, entry.required_tool
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let validation_text = timecycle_validation_rules()
+        .into_iter()
+        .map(|line| format!("- {}", line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tool_text = timecycle_tool_list(rankings)
+        .into_iter()
+        .map(|tool_name| format!("- {}", tool_name))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let must_not = [
+        "Do not invent exact values, ranges, or parameter meanings that are not present in the analyzer evidence.",
+        "Do not recommend whole-file replacement, node deletion, or mass numeric edits for timecycle_mods_3.xml, weather.xml, or any binary family.",
+        "Do not treat file names alone as proof of gameplay or visual effect; they are hints only.",
+        "Do not mix sky/timecycle planning with tracer, hit_effect, minimap_hud, kill_effect, or other unrelated components in a first patch.",
+        "Do not present an edit plan as final unless it includes validation steps and rollback expectations.",
+    ]
+    .iter()
+    .map(|line| format!("- {}", line))
+    .collect::<Vec<_>>()
+    .join("\n");
+    let may = [
+        "Infer which files are more relevant to sky, clouds, fog, or broad visual settings based on names and observed counts.",
+        "Recommend a first-patch order that starts with named-key DAT edits or color-only XML edits.",
+        "Suggest validation gates such as XML parse checks, DAT formatting preservation, and in-game screenshot comparison.",
+        "Group visualsettings.dat keys only by prefixes that already appear in sampleKeyChanges, such as Adaptation or Tonemapping.",
+        "Explain uncertainty explicitly and mark any behavioral interpretation as a hypothesis that still needs confirmation.",
+    ]
+    .iter()
+    .map(|line| format!("- {}", line))
+    .collect::<Vec<_>>()
+    .join("\n");
+
+    format!(
+        "# Sky/Timecycle AI Context — Redux Scanner\n\n## Scan Summary\n{}\n\n## Key Findings\n{}\n\n## Ranked Candidate Files\n{}\n\n## Safest First-Patch Scope\n{}\n\n## Risky / Deferred Files\n{}\n\n## Validation Rules\n{}\n\nThese validation rules matter because the scanner output is evidence-rich but still indirect. NumericChanges and colorLikeChanges show that a file moved, but they do not guarantee which parameter produced which screenshot result. Any AI plan should therefore optimize for reversibility, narrow scope, and explicit checkpoints.\n\n## Tool Requirements\n{}\n\n## AI Must Not\n{}\n\n## AI May\n{}\n\nUse this document as the primary context block for smaller models. It is deliberately compact, deterministic, and biased toward cautious planning rather than speculative conclusions.\n",
+        scan_summary,
+        key_findings,
+        ranked_candidates,
+        safe_scope_text,
+        risky_text,
+        validation_text,
+        tool_text,
+        must_not,
+        may,
+    )
+}
+
+fn render_ai_timecycle_prompt_pack() -> String {
+    r#"# AI Timecycle Prompt Pack
+
+## System Prompt
+You are analyzing Redux Scanner Engine output for sky and timecycle planning only. Treat all scanner evidence as deterministic but incomplete. Use cautious language such as likely, possible, candidate, hypothesis, and requires in-game validation. Never invent parameter meanings that are not already visible in filenames, key names, or explicit scanner counts. Never propose editing binary files, RPF archives, or unrelated components such as tracer, hit_effect, minimap_hud, or kill_effect in a first sky/timecycle patch.
+
+## User Prompt (Full Context)
+You will receive `ai_timecycle_context_compact.md` plus supporting report summaries. Produce a first-patch planning recommendation for Redux sky/timecycle work.
+
+Requirements:
+1. Rank the safest files to inspect or patch first.
+2. Explain why each file is a candidate using only scanner evidence.
+3. Keep every edit idea narrow, reversible, and validation-heavy.
+4. Separate safe first-patch ideas from risky/deferred ideas.
+5. State what still requires schema mapping or in-game validation.
+6. Do not invent exact edit values unless they already appear in named keys and the plan clearly marks them as examples rather than facts.
+
+## Compact Free-Model Prompt
+Given this Redux Scanner context, tell me the safest first-patch scope for sky/timecycle work. Keep the answer short. Rank files, explain evidence, list risky files to avoid, and include validation steps. Use cautious language only.
+
+## JSON Patch-Plan Prompt
+Read the scanner context and output JSON only.
+
+Schema:
+{
+  "recommendedOrder": [
+    {
+      "file": "visualsettings.dat",
+      "phase": "first_patch|defer",
+      "allowedOps": ["..."],
+      "blockedOps": ["..."],
+      "evidence": ["..."],
+      "confidence": "low|medium|high",
+      "validation": ["..."],
+      "notes": "..."
+    }
+  ],
+  "deferred": ["..."],
+  "unknowns": ["..."],
+  "finalWarning": "..."
+}
+
+Rules: no invented keys, no binary edits, no whole-file replacement, and no certainty claims without validation.
+
+## Critic/Grading Prompt
+Review another AI's sky/timecycle patch plan. Grade it for safety, evidence quality, scope control, and validation discipline.
+
+Checklist:
+- Did it stay inside sky/timecycle scope?
+- Did it avoid binary files and unrelated components?
+- Did it use only scanner evidence that was actually present?
+- Did it keep first patches narrow and reversible?
+- Did it clearly defer timecycle_mods_3.xml, weather.xml, and kill-effect-linked work?
+- Did it require in-game validation before claiming success?
+
+Output a short verdict plus bullet points for major risks, missing evidence, and the safest corrected plan.
+"#
+        .to_string()
+}
+
+fn build_and_write_timecycle_intelligence(
+    out_dir: &Path,
+    text_results: Option<&TextAnalysisResults>,
+    tool: &ToolMetadata,
+    timing: &Timing,
+    generated_at: &str,
+) -> Result<()> {
+    let tc_dir = out_dir.join("timecycle_intelligence");
+    fs::create_dir_all(&tc_dir)?;
+
+    let rankings = build_timecycle_file_rankings(text_results);
+    let safe_matrix = build_timecycle_safe_edit_matrix();
+    let visualsettings_report =
+        build_visualsettings_key_report(text_results, tool, timing, generated_at);
+    let cloudkeyframes_report =
+        build_cloudkeyframes_report(text_results, tool, timing, generated_at);
+    let weather_report = build_weather_xml_report(text_results, tool, timing, generated_at);
+    let risky_report = build_risky_files_report(tool, timing, generated_at);
+
+    let strategy_report = render_timecycle_strategy_report(
+        text_results,
+        &rankings,
+        &risky_report.risky_files,
+        tool,
+        generated_at,
+    );
+    let compact_context = render_ai_timecycle_context_compact(
+        text_results,
+        &rankings,
+        &risky_report.risky_files,
+        tool,
+        generated_at,
+    );
+    let prompt_pack = render_ai_timecycle_prompt_pack();
+
+    let rankings_report = TimecycleFileRankingsReport {
+        schema_version: SCHEMA_VERSION.to_string(),
+        ok: true,
+        artifact_type: "timecycle_file_rankings".to_string(),
+        tool: tool.clone(),
+        timing: timing.clone(),
+        generated_at: generated_at.to_string(),
+        rankings,
+    };
+    let safe_matrix_report = TimecycleSafeEditMatrixReport {
+        schema_version: SCHEMA_VERSION.to_string(),
+        ok: true,
+        artifact_type: "timecycle_safe_edit_matrix".to_string(),
+        tool: tool.clone(),
+        timing: timing.clone(),
+        generated_at: generated_at.to_string(),
+        entries: safe_matrix,
+    };
+
+    fs::write(
+        tc_dir.join("timecycle_strategy_report.md"),
+        strategy_report,
+    )?;
+    fs::write(
+        tc_dir.join("timecycle_file_rankings.json"),
+        serde_json::to_string_pretty(&rankings_report)?,
+    )?;
+    fs::write(
+        tc_dir.join("timecycle_safe_edit_matrix.json"),
+        serde_json::to_string_pretty(&safe_matrix_report)?,
+    )?;
+    fs::write(
+        tc_dir.join("visualsettings_key_report.json"),
+        serde_json::to_string_pretty(&visualsettings_report)?,
+    )?;
+    fs::write(
+        tc_dir.join("cloudkeyframes_report.json"),
+        serde_json::to_string_pretty(&cloudkeyframes_report)?,
+    )?;
+    fs::write(
+        tc_dir.join("weather_xml_report.json"),
+        serde_json::to_string_pretty(&weather_report)?,
+    )?;
+    fs::write(
+        tc_dir.join("risky_files_report.json"),
+        serde_json::to_string_pretty(&risky_report)?,
+    )?;
+    fs::write(
+        tc_dir.join("ai_timecycle_context_compact.md"),
+        compact_context,
+    )?;
+    fs::write(tc_dir.join("ai_timecycle_prompt_pack.md"), prompt_pack)?;
+
+    Ok(())
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dummy_tool_metadata() -> ToolMetadata {
+        ToolMetadata {
+            name: "redux_rpf_scanner".to_string(),
+            version: "0.8.1".to_string(),
+            backend: BACKEND_NAME.to_string(),
+            backendVersion: BACKEND_VERSION.to_string(),
+            platform: "windows".to_string(),
+        }
+    }
+
+    fn dummy_timing() -> Timing {
+        Timing {
+            startedAt: "2025-01-01T00:00:00Z".to_string(),
+            finishedAt: "2025-01-01T00:00:01Z".to_string(),
+            durationMs: 1000,
+        }
+    }
+
+    fn make_timecycle_xml_entry(path: &str, numeric_changes: usize, color_like_changes: usize) -> XmlDiffEntry {
+        XmlDiffEntry {
+            path: path.to_string(),
+            status: "modified".to_string(),
+            analyzer: "xml".to_string(),
+            parseStrategy: "line_diff".to_string(),
+            cleanLines: 10,
+            moddedLines: 10,
+            addedLines: 1,
+            removedLines: 1,
+            numericChanges: numeric_changes,
+            colorLikeChanges: color_like_changes,
+            sampleChanges: vec![],
+            warnings: vec![],
+        }
+    }
+
+    fn make_timecycle_key_change(key: &str) -> KeyValueChange {
+        KeyValueChange {
+            key: key.to_string(),
+            oldValue: "1.0".to_string(),
+            newValue: "2.0".to_string(),
+            valueType: "float".to_string(),
+            numericDelta: Some(1.0),
+        }
+    }
+
+    fn make_timecycle_dat_entry(
+        path: &str,
+        changed_key_count: usize,
+        numeric_changes: usize,
+        sample_key_changes: Vec<KeyValueChange>,
+    ) -> DatDiffEntry {
+        DatDiffEntry {
+            path: path.to_string(),
+            status: "modified".to_string(),
+            analyzer: "dat".to_string(),
+            readable: true,
+            cleanLines: 10,
+            moddedLines: 10,
+            changedKeyCount: changed_key_count,
+            addedLines: 1,
+            removedLines: 1,
+            numericChanges: numeric_changes,
+            sampleKeyChanges: sample_key_changes,
+            sampleChanges: vec![],
+            warnings: vec![],
+        }
+    }
+
+    fn make_timecycle_results(
+        xml_entries: Vec<XmlDiffEntry>,
+        dat_entries: Vec<DatDiffEntry>,
+    ) -> TextAnalysisResults {
+        TextAnalysisResults {
+            stats: TextAnalysisStats {
+                totalCandidates: xml_entries.len() + dat_entries.len(),
+                analyzedFiles: xml_entries.len() + dat_entries.len(),
+                skippedFiles: 0,
+                xmlAnalyzed: xml_entries.len(),
+                datAnalyzed: dat_entries.len(),
+                metaAnalyzed: 0,
+                genericTextAnalyzed: 0,
+                parseFailures: 0,
+                extractionFailures: 0,
+                tooLargeSkipped: 0,
+                skippedNotTextBytes: 0,
+            },
+            xml_entries,
+            dat_entries,
+            meta_entries: vec![],
+            generic_entries: vec![],
+            analyzer_warnings: vec![],
+            file_summaries: vec![],
+        }
+    }
 
     #[test]
     fn parse_scan_mode_accepts_valid_values() {
@@ -7672,6 +9435,176 @@ mod tests {
             assert!(a.ends_with(".json"));
         }
     }
+
+    #[test]
+    fn timecycle_rankings_visualsettings_with_keys_ranks_first() {
+        let results = make_timecycle_results(
+            vec![make_timecycle_xml_entry("cloudkeyframes.xml", 42, 88)],
+            vec![make_timecycle_dat_entry(
+                "visualsettings.dat",
+                4,
+                12,
+                vec![make_timecycle_key_change("Adaptation.max.step.size")],
+            )],
+        );
+        let rankings = build_timecycle_file_rankings(Some(&results));
+        assert_eq!(rankings.first().unwrap().path_or_family, "visualsettings.dat");
+        assert_eq!(rankings.first().unwrap().rank, 1);
+    }
+
+    #[test]
+    fn timecycle_rankings_cloudkeyframes_ranks_high() {
+        let results = make_timecycle_results(
+            vec![
+                make_timecycle_xml_entry("cloudkeyframes.xml", 30, 120),
+                make_timecycle_xml_entry("timecycle_mods_1.xml", 10, 40),
+                make_timecycle_xml_entry("w_foggy.xml", 20, 30),
+            ],
+            vec![],
+        );
+        let rankings = build_timecycle_file_rankings(Some(&results));
+        let cloud = rankings
+            .iter()
+            .find(|entry| entry.path_or_family == "cloudkeyframes.xml")
+            .unwrap();
+        assert!(cloud.rank <= 3, "cloudkeyframes rank was {}", cloud.rank);
+    }
+
+    #[test]
+    fn safe_edit_matrix_timecycle_mods3_is_blocked() {
+        let matrix = build_timecycle_safe_edit_matrix();
+        let entry = matrix
+            .iter()
+            .find(|item| item.file == "timecycle_mods_3.xml")
+            .unwrap();
+        assert!(entry.allowed_first_patch_operations.is_empty());
+        assert!(entry
+            .blocked_operations
+            .contains(&"schema_unknown_parameter_edit".to_string()));
+    }
+
+    #[test]
+    fn safe_edit_matrix_cloudkeyframes_allows_color_ops() {
+        let matrix = build_timecycle_safe_edit_matrix();
+        let entry = matrix
+            .iter()
+            .find(|item| item.file == "cloudkeyframes.xml")
+            .unwrap();
+        assert!(entry
+            .allowed_first_patch_operations
+            .contains(&"color_like_desaturation".to_string()));
+        assert!(entry
+            .allowed_first_patch_operations
+            .contains(&"color_like_darken".to_string()));
+    }
+
+    #[test]
+    fn risky_files_includes_tracer_component() {
+        let report = build_risky_files_report(
+            &dummy_tool_metadata(),
+            &dummy_timing(),
+            "2025-01-01T00:00:00Z",
+        );
+        let risky: Vec<&str> = report
+            .risky_files
+            .iter()
+            .map(|entry| entry.file_or_family.as_str())
+            .collect();
+        assert!(risky.contains(&"tracer component"));
+        assert!(risky.contains(&"hit_effect component"));
+        assert!(risky.contains(&"minimap_hud component"));
+    }
+
+    #[test]
+    fn cloudkeyframes_color_only_detection() {
+        let results = make_timecycle_results(
+            vec![make_timecycle_xml_entry("cloudkeyframes.xml", 0, 25)],
+            vec![],
+        );
+        let report = build_cloudkeyframes_report(
+            Some(&results),
+            &dummy_tool_metadata(),
+            &dummy_timing(),
+            "2025-01-01T00:00:00Z",
+        );
+        assert!(report.color_only_pattern_detected);
+        assert!(!report.numeric_and_color_pattern);
+    }
+
+    #[test]
+    fn weather_xml_deferred_classification() {
+        let results = make_timecycle_results(
+            vec![make_timecycle_xml_entry("weather.xml", 90, 12)],
+            vec![],
+        );
+        let report = build_weather_xml_report(
+            Some(&results),
+            &dummy_tool_metadata(),
+            &dummy_timing(),
+            "2025-01-01T00:00:00Z",
+        );
+        assert_eq!(report.global_weather_xml.path, "weather.xml");
+        assert_eq!(report.global_weather_xml.suggested_phase, "deferred");
+    }
+
+    #[test]
+    fn compact_context_contains_required_sections() {
+        let rankings = build_timecycle_file_rankings(None);
+        let risky = build_risky_files_report(
+            &dummy_tool_metadata(),
+            &dummy_timing(),
+            "2025-01-01T00:00:00Z",
+        );
+        let context = render_ai_timecycle_context_compact(
+            None,
+            &rankings,
+            &risky.risky_files,
+            &dummy_tool_metadata(),
+            "2025-01-01T00:00:00Z",
+        );
+        assert!(context.contains("# Sky/Timecycle AI Context — Redux Scanner"));
+        assert!(context.contains("## Scan Summary"));
+        assert!(context.contains("## Ranked Candidate Files"));
+        assert!(context.contains("## AI Must Not"));
+        assert!(context.contains("## AI May"));
+    }
+
+    #[test]
+    fn visualsettings_key_grouping_by_prefix() {
+        let results = make_timecycle_results(
+            vec![],
+            vec![make_timecycle_dat_entry(
+                "visualsettings.dat",
+                1,
+                1,
+                vec![make_timecycle_key_change("Adaptation.max.step.size")],
+            )],
+        );
+        let report = build_visualsettings_key_report(
+            Some(&results),
+            &dummy_tool_metadata(),
+            &dummy_timing(),
+            "2025-01-01T00:00:00Z",
+        );
+        let family = report
+            .key_families
+            .iter()
+            .find(|entry| entry.family == "Adaptation")
+            .unwrap();
+        assert!(family
+            .keys
+            .contains(&"Adaptation.max.step.size".to_string()));
+    }
+
+    #[test]
+    fn prompt_pack_contains_all_prompt_types() {
+        let prompt_pack = render_ai_timecycle_prompt_pack();
+        assert!(prompt_pack.contains("## System Prompt"));
+        assert!(prompt_pack.contains("## User Prompt (Full Context)"));
+        assert!(prompt_pack.contains("## Compact Free-Model Prompt"));
+        assert!(prompt_pack.contains("## JSON Patch-Plan Prompt"));
+        assert!(prompt_pack.contains("## Critic/Grading Prompt"));
+    }
 }
 
 fn main() -> Result<()> {
@@ -8234,6 +10167,30 @@ fn main() -> Result<()> {
                             format!("corpus build failed: {}", e),
                         );
                         println!("corpus build failed: {}", e);
+                    }
+                }
+
+                if args.analyze_text {
+                    match build_and_write_timecycle_intelligence(
+                        &out_dir,
+                        text_analysis_results.as_ref(),
+                        &tool,
+                        &timing,
+                        &generated_at,
+                    ) {
+                        Ok(()) => println!(
+                            "timecycle intelligence written to: {}/timecycle_intelligence",
+                            out_dir.display()
+                        ),
+                        Err(e) => {
+                            push_warning(
+                                &mut warnings,
+                                "TIMECYCLE_INTELLIGENCE_ERROR",
+                                "",
+                                format!("timecycle intelligence failed: {}", e),
+                            );
+                            println!("timecycle intelligence failed: {}", e);
+                        }
                     }
                 }
             }

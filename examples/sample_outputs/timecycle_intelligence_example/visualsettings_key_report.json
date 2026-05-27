@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "visualsettings_key_report",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.8.1",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.8.1",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2026-05-27T12:00:00Z",
+    "finishedAt": "2026-05-27T12:00:01Z",
+    "durationMs": 1000
+  },
+  "generatedAt": "2026-05-27T12:00:01Z",
+  "file": "visualsettings.dat",
+  "status": "modified",
+  "changedKeyCount": 4,
+  "numericChanges": 12,
+  "keyFamilies": [
+    {
+      "family": "Adaptation",
+      "keys": ["Adaptation.example.key"],
+      "sampleChanges": [
+        {
+          "key": "Adaptation.example.key",
+          "oldValue": "1.0",
+          "newValue": "2.0",
+          "valueType": "float",
+          "numericDelta": 1.0
+        }
+      ],
+      "risk": "medium",
+      "safeForFirstPatch": true,
+      "hypothesis": "Key family name suggests adaptation-related tuning — unconfirmed."
+    }
+  ],
+  "note": "Key meanings are hypotheses only. Do not invent parameter meanings not present in key names."
+}

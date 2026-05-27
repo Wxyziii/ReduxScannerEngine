@@ -806,3 +806,24 @@ A `.devcontainer/devcontainer.json` is provided for Linux development in Codespa
 It includes: Rust (latest), CMake, build-essential/g++, rust-analyzer.
 
 **Do not add GTA keys or RPF files to Codespaces.** Real RPF tests must remain on local trusted machines.
+
+## R0.8.1 — Timecycle Intelligence Reports
+
+When `diff-against-baseline` runs with both `--analyze-text` and `--build-learning-corpus`, the scanner now also writes a report-only bundle to `<out_dir>/timecycle_intelligence/`.
+
+Generated files (9 total):
+- `timecycle_strategy_report.md`
+- `timecycle_file_rankings.json`
+- `timecycle_safe_edit_matrix.json`
+- `visualsettings_key_report.json`
+- `cloudkeyframes_report.json`
+- `weather_xml_report.json`
+- `risky_files_report.json`
+- `ai_timecycle_context_compact.md`
+- `ai_timecycle_prompt_pack.md`
+
+Notes:
+- This phase is **report-only**. It never edits RPF content or calls AI APIs.
+- `ai_timecycle_context_compact.md` is the primary paste-ready AI input file.
+- The reports use cautious language and treat all file meanings as hypotheses pending in-game validation.
+- Do not commit real `timecycle_intelligence/` outputs generated from GTA V data. See `examples/sample_outputs/timecycle_intelligence_example/` for sanitized fictional examples.

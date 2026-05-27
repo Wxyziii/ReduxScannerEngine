@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "timecycle_safe_edit_matrix",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.8.1",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.8.1",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2026-05-27T12:00:00Z",
+    "finishedAt": "2026-05-27T12:00:01Z",
+    "durationMs": 1000
+  },
+  "generatedAt": "2026-05-27T12:00:01Z",
+  "entries": [
+    {
+      "file": "cloudkeyframes.xml",
+      "allowedFirstPatchOperations": ["color_like_desaturation", "color_like_darken"],
+      "blockedOperations": ["mass_numeric_edit", "node_deletion", "whole_file_replacement"],
+      "deferredOperations": ["density_or_shape_numeric_edits"],
+      "validatorChecks": ["xml_parse_ok", "no_unexpected_node_deletion", "only_color_attributes_changed"]
+    },
+    {
+      "file": "visualsettings.dat",
+      "allowedFirstPatchOperations": ["named_key_edit_one_at_a_time", "small_numeric_delta_on_named_key"],
+      "blockedOperations": ["mass_line_replacement", "whole_file_replacement", "multi_family_batch_edit"],
+      "deferredOperations": ["unknown_key_family_edits"],
+      "validatorChecks": ["preserve_dat_formatting", "changed_keys_are_named", "one_family_per_patch"]
+    },
+    {
+      "file": "timecycle_mods_3.xml",
+      "allowedFirstPatchOperations": [],
+      "blockedOperations": ["mass_numeric_edit", "node_deletion", "whole_file_replacement", "schema_unknown_parameter_edit"],
+      "deferredOperations": ["all_operations_until_schema_known"],
+      "validatorChecks": ["schema_mapping_required", "parameter_range_validation_required"]
+    }
+  ]
+}
