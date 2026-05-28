@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "baseline_metadata",
+  "baselineArchiveHash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "baselineArchiveSizeBytes": 1073741824,
+  "baselineArchiveFileName": "clean_update.rpf",
+  "scannerVersion": "0.2.0",
+  "scanMode": "full",
+  "depth": 4,
+  "createdAt": "2025-01-01T00:00:05Z",
+  "rules": {
+    "componentRulesSource": "fallback",
+    "componentRulesPath": null,
+    "componentRulesVersion": "built-in",
+    "targetRulesSource": "fallback",
+    "targetRulesPath": null,
+    "targetRulesVersion": "built-in",
+    "rulesDir": null,
+    "usedFallbackRules": false
+  },
+  "artifacts": {
+    "fullCleanManifest": "full_clean_manifest.json",
+    "fullCleanTree": "full_clean_tree.json",
+    "baselineFingerprint": "baseline_update_tree_fingerprint.json",
+    "baselineMetadata": "baseline_metadata.json"
+  },
+  "reusableWhen": "archive sha256, scanner version, schema version, and rules version all match"
+}

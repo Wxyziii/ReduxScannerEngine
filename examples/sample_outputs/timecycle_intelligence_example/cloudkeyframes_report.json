@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "cloudkeyframes_report",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.8.1",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.8.1",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2026-05-27T12:00:00Z",
+    "finishedAt": "2026-05-27T12:00:01Z",
+    "durationMs": 1000
+  },
+  "generatedAt": "2026-05-27T12:00:01Z",
+  "file": "cloudkeyframes.xml",
+  "status": "modified",
+  "numericChanges": 42,
+  "colorLikeChanges": 88,
+  "colorOnlyPatternDetected": false,
+  "numericAndColorPattern": true,
+  "suggestedFirstPatchOperation": "color_like_values_only",
+  "blockedUntilSchemaKnown": "numeric_mass_edit",
+  "evidence": [
+    "88 color-like changes were detected.",
+    "42 numeric changes were detected.",
+    "Both numeric and color-like deltas are present, so schema-aware review is still required."
+  ],
+  "confidence": "medium",
+  "note": "Sanitized example only; mixed numeric and color-like deltas still require cautious validation."
+}

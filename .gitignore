@@ -45,3 +45,4 @@ Thumbs.db
 
 # Local artifacts
 /.copilot/
+.aider*

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "risky_files_report",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.8.1",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.8.1",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2026-05-27T12:00:00Z",
+    "finishedAt": "2026-05-27T12:00:01Z",
+    "durationMs": 1000
+  },
+  "generatedAt": "2026-05-27T12:00:01Z",
+  "riskyFiles": [
+    {
+      "fileOrFamily": "timecycle_mods_3.xml",
+      "reason": "95 numeric changes with fictional schema unknown; mass edit would be unpredictable.",
+      "risk": "high",
+      "whenAllowed": "After xml_timecycle_editor maps parameter names, ranges, and validation rules.",
+      "requiredTool": "xml_timecycle_editor with parameter-name mapping"
+    },
+    {
+      "fileOrFamily": "weather.xml",
+      "reason": "Global weather configuration may coordinate multiple systems.",
+      "risk": "high",
+      "whenAllowed": "After cross-file weather effects are mapped and validated.",
+      "requiredTool": "xml_weather_editor with global validation"
+    },
+    {
+      "fileOrFamily": "tracer component",
+      "reason": "Tracer changes are unrelated to sky/timecycle and should not be mixed into a first patch.",
+      "risk": "high",
+      "whenAllowed": "After timecycle-only validation is complete.",
+      "requiredTool": "component-specific effect editor"
+    }
+  ],
+  "note": "Sanitized fictional example only."
+}

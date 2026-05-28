@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "component_frequency",
+  "tool": { "name": "rpf_backend_rs", "version": "0.2.0" },
+  "entries": [
+    {
+      "component": "unknown",
+      "totalChanged": 13894,
+      "added": 2800,
+      "removed": 9000,
+      "modified": 2094,
+      "topExtensions": ["gxt2", "ytd", "ysc", "ymap", "ydr"],
+      "topPaths": ["common/data", "x64/data", "x64/textures"],
+      "isKnownComponent": false
+    },
+    {
+      "component": "hit_effect",
+      "totalChanged": 350,
+      "added": 0,
+      "removed": 0,
+      "modified": 350,
+      "topExtensions": ["ypt", "ytd", "xml"],
+      "topPaths": ["x64/particles"],
+      "isKnownComponent": true
+    },
+    {
+      "component": "tracer",
+      "totalChanged": 341,
+      "added": 0,
+      "removed": 0,
+      "modified": 341,
+      "topExtensions": ["ypt", "ytd"],
+      "topPaths": ["x64/particles"],
+      "isKnownComponent": true
+    },
+    {
+      "component": "minimap_hud",
+      "totalChanged": 118,
+      "added": 10,
+      "removed": 5,
+      "modified": 103,
+      "topExtensions": ["ytd", "gfx", "xml"],
+      "topPaths": ["x64/textures/hud"],
+      "isKnownComponent": true
+    },
+    {
+      "component": "sky_timecycle",
+      "totalChanged": 21,
+      "added": 0,
+      "removed": 0,
+      "modified": 21,
+      "topExtensions": ["xml", "dat"],
+      "topPaths": ["common/data/timecycle"],
+      "isKnownComponent": true
+    }
+  ]
+}

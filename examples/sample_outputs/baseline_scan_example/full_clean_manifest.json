@@ -1,0 +1,88 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "full_clean_manifest",
+  "tool": {
+    "name": "rpf_backend_rs",
+    "version": "0.2.0",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.2.0",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2025-01-01T00:00:00Z",
+    "finishedAt": "2025-01-01T00:00:05Z",
+    "durationMs": 5000
+  },
+  "scan": {
+    "mode": "full",
+    "depth": 4,
+    "archivePath": "examples/fixtures/clean_update.rpf",
+    "archiveFileName": "clean_update.rpf",
+    "archiveSizeBytes": 1073741824,
+    "archiveSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "keysPathProvided": true
+  },
+  "rules": {
+    "componentRulesSource": "fallback",
+    "componentRulesPath": null,
+    "componentRulesVersion": "built-in",
+    "targetRulesSource": "fallback",
+    "targetRulesPath": null,
+    "targetRulesVersion": "built-in",
+    "rulesDir": null,
+    "usedFallbackRules": false
+  },
+  "stats": {
+    "totalEntries": 4,
+    "scannedEntries": 4,
+    "targetEntries": 4,
+    "nestedArchivesOpened": 1,
+    "textCandidates": 2,
+    "binaryCandidates": 2,
+    "warnings": 0
+  },
+  "warnings": [],
+  "files": [
+    {
+      "path": "common/data/timecycle/timecycle_mods_1.xml",
+      "name": "timecycle_mods_1.xml",
+      "extension": "xml",
+      "sizeBytes": 47001,
+      "sha256": "aabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccddaabbccdd",
+      "source": "examples/fixtures/clean_update.rpf",
+      "isTextCandidate": true,
+      "isBinaryCandidate": false
+    },
+    {
+      "path": "common/data/visualsettings.dat",
+      "name": "visualsettings.dat",
+      "extension": "dat",
+      "sizeBytes": 12500,
+      "sha256": "1122334411223344112233441122334411223344112233441122334411223344",
+      "source": "examples/fixtures/clean_update.rpf",
+      "isTextCandidate": true,
+      "isBinaryCandidate": false
+    },
+    {
+      "path": "x64/patch/data/effects/ptfx.rpf",
+      "name": "ptfx.rpf",
+      "extension": "rpf",
+      "sizeBytes": 3324239,
+      "sha256": "5566778855667788556677885566778855667788556677885566778855667788",
+      "source": "examples/fixtures/clean_update.rpf",
+      "isTextCandidate": false,
+      "isBinaryCandidate": true
+    },
+    {
+      "path": "x64/patch/data/effects/ptfx.rpf/core.ypt",
+      "name": "core.ypt",
+      "extension": "ypt",
+      "sizeBytes": 3318000,
+      "sha256": "99aabbcc99aabbcc99aabbcc99aabbcc99aabbcc99aabbcc99aabbcc99aabbcc",
+      "source": "examples/fixtures/clean_update.rpf/ptfx.rpf",
+      "isTextCandidate": false,
+      "isBinaryCandidate": true
+    }
+  ]
+}

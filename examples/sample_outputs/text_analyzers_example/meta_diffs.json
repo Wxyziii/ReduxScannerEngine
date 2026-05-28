@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "meta_diffs",
+  "tool": {
+    "name": "rpf_backend_rs",
+    "version": "0.2.0"
+  },
+  "timing": {
+    "startedAt": "2025-01-01T00:00:00Z",
+    "elapsedSeconds": 2.10
+  },
+  "stats": {
+    "total": 2
+  },
+  "entries": [
+    {
+      "path": "weapons.meta",
+      "status": "modified",
+      "analyzer": "meta_analyzer",
+      "parseStrategy": "line_diff_with_xml_hints",
+      "cleanLines": 820,
+      "moddedLines": 821,
+      "addedLines": 5,
+      "removedLines": 4,
+      "numericChanges": 7,
+      "colorLikeChanges": 0,
+      "sampleChanges": [
+        {
+          "lineIndex": 340,
+          "kind": "changed",
+          "oldLine": "  <fDamage value=\"30.000000\" />",
+          "newLine": "  <fDamage value=\"45.000000\" />",
+          "changeHint": "numeric_change"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "path": "handling.meta",
+      "status": "modified",
+      "analyzer": "meta_analyzer",
+      "parseStrategy": "line_diff_with_xml_hints",
+      "cleanLines": 1250,
+      "moddedLines": 1248,
+      "addedLines": 8,
+      "removedLines": 10,
+      "numericChanges": 12,
+      "colorLikeChanges": 0,
+      "sampleChanges": [
+        {
+          "lineIndex": 215,
+          "kind": "changed",
+          "oldLine": "  <fDriveInertia value=\"0.100000\" />",
+          "newLine": "  <fDriveInertia value=\"0.150000\" />",
+          "changeHint": "numeric_change"
+        }
+      ],
+      "warnings": []
+    }
+  ]
+}

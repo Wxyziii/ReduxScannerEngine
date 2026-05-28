@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "unknown_changes",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.2.0",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.2.0",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2025-01-01T00:00:00Z",
+    "finishedAt": "2025-01-01T00:00:03Z",
+    "durationMs": 3000
+  },
+  "scan": {
+    "mode": "full",
+    "depth": 2
+  },
+  "stats": {
+    "totalUnknown": 3,
+    "textCandidates": 2,
+    "binaryCandidates": 1,
+    "analyzerRequired": 1
+  },
+  "entries": [
+    {
+      "path": "ambientpedmodelsets.meta",
+      "status": "modified",
+      "name": "ambientpedmodelsets.meta",
+      "extension": "meta",
+      "cleanSizeBytes": 12000,
+      "moddedSizeBytes": 12979,
+      "sizeDeltaBytes": 979,
+      "cleanSha256": "aaaa0000000000000000000000000000000000000000000000000000000000001111",
+      "moddedSha256": "bbbb0000000000000000000000000000000000000000000000000000000000002222",
+      "categoryGuess": "config_or_text",
+      "unknownClass": "unknown_config_candidate",
+      "analyzerRequired": false,
+      "safeForAiTextExtraction": true,
+      "nestedArchivePath": null,
+      "reason": "size and sha256 differ",
+      "priority": "high"
+    },
+    {
+      "path": "animpostfx.ymt",
+      "status": "modified",
+      "name": "animpostfx.ymt",
+      "extension": "ymt",
+      "cleanSizeBytes": 8000,
+      "moddedSizeBytes": 10496,
+      "sizeDeltaBytes": 2496,
+      "cleanSha256": "cccc0000000000000000000000000000000000000000000000000000000000003333",
+      "moddedSha256": "dddd0000000000000000000000000000000000000000000000000000000000004444",
+      "categoryGuess": "config_or_text",
+      "unknownClass": "unknown_text_candidate",
+      "analyzerRequired": false,
+      "safeForAiTextExtraction": true,
+      "nestedArchivePath": null,
+      "reason": "size and sha256 differ",
+      "priority": "high"
+    },
+    {
+      "path": "scaleform_generic.rpf/minimap_overlay.ytd",
+      "status": "modified",
+      "name": "minimap_overlay.ytd",
+      "extension": "ytd",
+      "cleanSizeBytes": 512000,
+      "moddedSizeBytes": 480000,
+      "sizeDeltaBytes": -32000,
+      "cleanSha256": "eeee0000000000000000000000000000000000000000000000000000000000005555",
+      "moddedSha256": "ffff0000000000000000000000000000000000000000000000000000000000006666",
+      "categoryGuess": "texture_dictionary",
+      "unknownClass": "unknown_binary_candidate",
+      "analyzerRequired": true,
+      "safeForAiTextExtraction": false,
+      "nestedArchivePath": "scaleform_generic.rpf",
+      "reason": "size and sha256 differ",
+      "priority": "medium"
+    }
+  ],
+  "warnings": []
+}

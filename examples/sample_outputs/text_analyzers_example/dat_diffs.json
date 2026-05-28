@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "dat_diffs",
+  "tool": {
+    "name": "rpf_backend_rs",
+    "version": "0.2.0"
+  },
+  "timing": {
+    "startedAt": "2025-01-01T00:00:00Z",
+    "elapsedSeconds": 0.45
+  },
+  "stats": {
+    "total": 2
+  },
+  "entries": [
+    {
+      "path": "visualsettings.dat",
+      "status": "modified",
+      "analyzer": "dat_config_analyzer",
+      "readable": true,
+      "cleanLines": 245,
+      "moddedLines": 247,
+      "changedKeyCount": 18,
+      "addedLines": 3,
+      "removedLines": 1,
+      "numericChanges": 16,
+      "sampleKeyChanges": [
+        {
+          "key": "Adaptation.max.step.size",
+          "oldValue": "3.0",
+          "newValue": "4.5",
+          "valueType": "number",
+          "numericDelta": 1.5
+        },
+        {
+          "key": "fog.density",
+          "oldValue": "0.7",
+          "newValue": "0.2",
+          "valueType": "number",
+          "numericDelta": -0.5
+        },
+        {
+          "key": "bloom.intensity",
+          "oldValue": "1.0",
+          "newValue": "0.6",
+          "valueType": "number",
+          "numericDelta": -0.4
+        }
+      ],
+      "sampleChanges": [],
+      "warnings": []
+    },
+    {
+      "path": "bloodfx.dat",
+      "status": "modified",
+      "analyzer": "dat_config_analyzer",
+      "readable": true,
+      "cleanLines": 88,
+      "moddedLines": 90,
+      "changedKeyCount": 4,
+      "addedLines": 2,
+      "removedLines": 0,
+      "numericChanges": 4,
+      "sampleKeyChanges": [
+        {
+          "key": "particle_count_max",
+          "oldValue": "128",
+          "newValue": "256",
+          "valueType": "number",
+          "numericDelta": 128.0
+        }
+      ],
+      "sampleChanges": [],
+      "warnings": []
+    }
+  ]
+}

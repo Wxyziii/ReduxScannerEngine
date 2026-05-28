@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "candidate_patterns",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.2.0",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.2.0",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2025-01-01T00:00:00Z",
+    "finishedAt": "2025-01-01T00:00:03Z",
+    "durationMs": 3000
+  },
+  "stats": {
+    "totalPatterns": 2,
+    "totalFiles": 3
+  },
+  "patterns": [
+    {
+      "patternId": "pattern_001",
+      "title": "Unknown .meta cluster",
+      "candidateComponent": "config_or_text",
+      "confidence": "high",
+      "evidence": [
+        "shared extension: meta",
+        "file count: 2"
+      ],
+      "files": [
+        "ambientpedmodelsets.meta",
+        "pedconfigurations.meta"
+      ],
+      "recommendedNextStep": "run DAT/META/XML analyzer in R0.7"
+    },
+    {
+      "patternId": "pattern_002",
+      "title": "Unknown changes under scaleform_generic.rpf",
+      "candidateComponent": "unknown_nested_archive",
+      "confidence": "medium",
+      "evidence": [
+        "shared nested archive: scaleform_generic.rpf",
+        "file count: 1"
+      ],
+      "files": [
+        "scaleform_generic.rpf/minimap_overlay.ytd"
+      ],
+      "recommendedNextStep": "run nested RPF scan"
+    }
+  ]
+}

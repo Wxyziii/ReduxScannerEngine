@@ -1,0 +1,108 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "rpf_classification",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.2.0",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.2.0",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2026-01-15T10:00:00.000Z",
+    "finishedAt": "2026-01-15T10:02:05.123Z",
+    "durationMs": 125123
+  },
+  "scan": {
+    "mode": "tree-only",
+    "depth": 3
+  },
+  "archive": {
+    "path": "examples/fixtures/redux.rpf",
+    "fileName": "redux.rpf",
+    "sizeBytes": 1588602880,
+    "sha256": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+    "entryCount": 14449
+  },
+  "baseline": {
+    "archiveFileName": "update.rpf",
+    "archiveSha256": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+    "treeFingerprintSha256": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "totalPaths": 21328
+  },
+  "classification": "obvious_update_rpf",
+  "confidence": 1.0,
+  "score": 100,
+  "recommendedAction": "import_as_update_rpf",
+  "reasons": [
+    "Archive matched update.rpf tree when opened with logical name \"update.rpf\". GTA V NG encryption derives decryption keys from the archive filename; the physical name \"redux.rpf\" produced no readable tree (score=0).",
+    "Matched anchor \"american_rel.rpf/\" (+18)",
+    "Matched anchor \"visualsettings.dat\" (+14)",
+    "Matched anchor \"ptfx.rpf/\" (+12)",
+    "Matched anchor \"scaleform_frontend.rpf/\" (+10)",
+    "Matched anchor \"gta5_cache_y.dat\" (+10)",
+    "Matched anchor \"popcycle.dat\" (+8)",
+    "Matched anchor \"carcols.meta\" (+7)",
+    "Matched anchor \"hudcolor.dat\" (+6)",
+    "Has .yvr files (route/animation data, +8)",
+    "Has .ysc files (scripts, +6)",
+    "Has .gxt2 files (text strings, +5)",
+    "Has .ymap files (world data, +3)",
+    "Has .fxc files (shaders, +2)",
+    "Has .dat files (+1)",
+    "Has .meta files (+1)",
+    "Large archive (14449 entries, +8)",
+    "Entry count ratio 68% of baseline (14449 / 21328, +5)"
+  ],
+  "matchedAnchors": [
+    "american_rel.rpf/",
+    "ptfx.rpf/",
+    "scaleform_frontend.rpf/",
+    "visualsettings.dat",
+    "gta5_cache_y.dat",
+    "popcycle.dat",
+    "carcols.meta",
+    "hudcolor.dat"
+  ],
+  "missingAnchors": [],
+  "topLevelFolders": [
+    "american_rel.rpf",
+    "ptfx.rpf",
+    "scaleform_frontend.rpf"
+  ],
+  "extensionHistogram": [
+    { "extension": "gxt2", "count": 7800 },
+    { "extension": "yvr",  "count": 3200 },
+    { "extension": "ytd",  "count": 2400 },
+    { "extension": "ysc",  "count": 900 },
+    { "extension": "ymap", "count": 1200 },
+    { "extension": "ymt",  "count": 650 },
+    { "extension": "ypt",  "count": 450 },
+    { "extension": "dat",  "count": 38 },
+    { "extension": "meta", "count": 200 },
+    { "extension": "fxc",  "count": 360 }
+  ],
+  "attempts": [
+    {
+      "physicalFileName": "redux.rpf",
+      "logicalFileName": "redux.rpf",
+      "entryCount": 541,
+      "score": 0,
+      "classification": "unknown_rpf",
+      "usedForResult": false,
+      "note": null
+    },
+    {
+      "physicalFileName": "redux.rpf",
+      "logicalFileName": "update.rpf",
+      "entryCount": 14449,
+      "score": 100,
+      "classification": "obvious_update_rpf",
+      "usedForResult": true,
+      "note": "Archive matched update.rpf tree when opened with logical name \"update.rpf\"."
+    }
+  ],
+  "usedLogicalArchiveName": "update.rpf",
+  "warnings": []
+}

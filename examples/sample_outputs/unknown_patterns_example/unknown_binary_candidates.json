@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "unknown_binary_candidates",
+  "tool": {
+    "name": "redux_rpf_scanner",
+    "version": "0.2.0",
+    "backend": "rpf_backend_rs",
+    "backendVersion": "0.2.0",
+    "platform": "windows"
+  },
+  "timing": {
+    "startedAt": "2025-01-01T00:00:00Z",
+    "finishedAt": "2025-01-01T00:00:03Z",
+    "durationMs": 3000
+  },
+  "stats": {
+    "total": 1
+  },
+  "entries": [
+    {
+      "path": "scaleform_generic.rpf/minimap_overlay.ytd",
+      "extension": "ytd",
+      "status": "modified",
+      "cleanSizeBytes": 512000,
+      "moddedSizeBytes": 480000,
+      "sizeDeltaBytes": -32000,
+      "reason": "size and sha256 differ",
+      "futureAnalyzer": "ytd_texture_analyzer",
+      "priority": "medium",
+      "analyzerRequired": true
+    }
+  ],
+  "warnings": []
+}

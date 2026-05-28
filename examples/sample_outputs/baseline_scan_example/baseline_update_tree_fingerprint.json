@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "baseline_update_tree_fingerprint",
+  "archive": {
+    "archivePath": "examples/fixtures/clean_update.rpf",
+    "archiveFileName": "clean_update.rpf",
+    "archiveSizeBytes": 1073741824,
+    "archiveSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "totalPaths": 4,
+  "extensionHistogram": {
+    "dat": 1,
+    "rpf": 1,
+    "xml": 1,
+    "ypt": 1
+  },
+  "topLevelFolders": [
+    "common",
+    "x64"
+  ],
+  "anchorPaths": {
+    "found": [
+      "common/",
+      "common/data/",
+      "common/data/visualsettings.dat"
+    ],
+    "missing": [
+      "common/data/timecycle/",
+      "x64/",
+      "dlc_patch/"
+    ]
+  },
+  "treeFingerprintSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+}

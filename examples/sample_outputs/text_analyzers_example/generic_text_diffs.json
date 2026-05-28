@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "2.0",
+  "ok": true,
+  "artifactType": "generic_text_diffs",
+  "tool": {
+    "name": "rpf_backend_rs",
+    "version": "0.2.0"
+  },
+  "timing": {
+    "startedAt": "2025-01-01T00:00:00Z",
+    "elapsedSeconds": 0.05
+  },
+  "stats": {
+    "total": 1
+  },
+  "entries": [
+    {
+      "path": "readme.txt",
+      "status": "modified",
+      "analyzer": "generic_text_analyzer",
+      "parseStrategy": "line_diff_with_xml_hints",
+      "cleanLines": 12,
+      "moddedLines": 14,
+      "addedLines": 2,
+      "removedLines": 0,
+      "numericChanges": 0,
+      "colorLikeChanges": 0,
+      "sampleChanges": [
+        {
+          "lineIndex": 12,
+          "kind": "added",
+          "oldLine": "",
+          "newLine": "Redux v3.0 compatibility update",
+          "changeHint": "text_change"
+        }
+      ],
+      "warnings": []
+    }
+  ]
+}
