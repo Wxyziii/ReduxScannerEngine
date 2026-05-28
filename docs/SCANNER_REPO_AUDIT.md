@@ -536,6 +536,472 @@ Current scanner does **classification only**, not true inside-file analysis. `bu
 | `extracted_text/` | **missing** | No extraction pipeline. |
 | `learning_corpus/` | **missing** | No corpus builder. |
 | `ai_chunks/` | **missing** | No chunker/indexer. |
+
+---
+
+# Cross-Project Audit — R0.8.1 Era
+
+**Date of audit:** 2026-05-28  
+**Scanner phase:** R0.8.1 complete  
+**OpenRouter Model Tester:** audited alongside scanner  
+**Auditor:** GitHub Copilot CLI
+
+This section covers both projects as of the completion of R0.8.1 (timecycle intelligence reports), and evaluates readiness for the next phase: `patch_plan.json` schema, plan validator, and deterministic editor tools.
+
+---
+
+## 1. Overall Verdicts
+
+| Project | Verdict |
+|---|---|
+| Redux Scanner Engine | **Almost ready** — R0.8.1 complete, reports are AI-usable. One known build gap (Rust binary not auto-copied). |
+| OpenRouter Model Tester | **Almost ready** — clean architecture, good safety controls. Rule checker has specific false-positive/false-negative edge cases to fix. |
+| Combined AI testing workflow | **Almost ready** — scanner output drives tester input correctly. Workflow gap is rule checker quality + no `patch_plan.json` schema yet. |
+
+---
+
+## 2. Redux Scanner Engine — Current State (R0.8.1)
+
+### What is now complete
+
+All phases R0.1–R0.9 are complete and committed. The scanner can:
+
+- `scan-rpf` — full entry scan, hashing, JSON output, schemaVersion, timing
+- `compare-rpf` — diff clean vs modded, per-file change classification, component detection, structured warnings
+- `baseline-scan` — writes `baseline_fingerprint.json` with archive hash and entry list
+- `diff-against-baseline` — loads baseline, compares modded, emits full diff JSON + Markdown
+- `--classify-rpf` — renames renamed/repackaged `update.rpf` detection
+- `--analyze-text` — XML/DAT/META internal content analysis (key extraction, diff values, color-like detection)
+- `--build-learning-corpus` — aggregates analysis output into structured `learning_corpus/` folder
+- `--analyze-text --build-learning-corpus` together → auto-generates `timecycle_intelligence/` subfolder (R0.8.1)
+- Batch scanning of multiple Reduxes
+
+### R0.8.1 timecycle intelligence outputs (per Redux)
+
+Each Redux diff output folder gets `timecycle_intelligence/` with:
+
+```
+timecycle_intelligence/
+├── timecycle_strategy_report.md        — human/AI-readable strategy overview
+├── timecycle_file_rankings.json        — ranked candidate files with confidence/risk
+├── timecycle_safe_edit_matrix.json     — allowed/blocked/deferred operations per file
+├── visualsettings_key_report.json      — named key families, risk levels
+├── cloudkeyframes_report.json          — color-only vs numeric evidence
+├── weather_xml_report.json             — per-weather and global weather file summary
+├── risky_files_report.json             — files AI must not edit first
+├── ai_timecycle_context_compact.md     — paste-ready compact AI context (~1000-1800 words)
+└── ai_timecycle_prompt_pack.md         — ready-to-use AI prompts
+```
+
+Aggregate reports also generated for multi-Redux batch runs in `ai_review_bundle/timecycle_intelligence_aggregate/`.
+
+### Key real-data findings from 3-Redux batch test
+
+| File/family | redux_001 | redux_002 | redux_003 | Recommendation |
+|---|---|---|---|---|
+| `visualsettings.dat` | ✅ 208 named keys | ✅ 870 numeric keys | ✅ near-full replacement | first_patch (named-key edits only) |
+| `cloudkeyframes.xml` | ✅ 1306 numeric + 2075 color | ✗ not present | ✅ 0 numeric + 1322 color (color-ONLY) | first_patch for color operations; color-only pattern confirmed |
+| `w_*.xml` family | ✅ 16-17 files changed | ✅ | ✅ pure color-only | first_patch for w_foggy/w_clouds |
+| `timecycle_mods_1.xml` | ✅ | ✅ | ✅ | first_patch |
+| `timecycle_mods_3.xml` | ~2951 numeric | ~2951 numeric | | blocked — mass numeric risk |
+| `weather.xml` | 272 numeric | 14 numeric | 294 numeric | deferred — likely global/system |
+| Binary files (.ytd/.ypt/.gfx) | various | various | various | blocked |
+| `sky_timecycle` component | ✅ detected | ✅ detected | ✅ detected | confirmed in all 3 |
+
+### Known build workflow gap
+
+**Critical:** `cmake --build build --config Release` rebuilds only the C++ launcher. The Rust backend binary must be **manually copied** after `cargo build --release`:
+
+```powershell
+Copy-Item rpf_backend_rs\target\release\rpf_backend_rs.exe build\Release\tools\rpf_backend_rs.exe -Force
+```
+
+This caused timecycle_intelligence to silently not generate during early R0.8.1 testing (stale binary was pre-R0.8.1). This gap should be documented in the build scripts or scripted into `build_windows.ps1`.
+
+### Rust backend test count
+
+- **69 tests** pass as of R0.8.1 (`cargo test`)
+- 10 new tests added for timecycle intelligence logic
+- No test failures
+
+### Scanner report quality for AI testing
+
+| Quality dimension | Assessment |
+|---|---|
+| Compact enough for free/weak models | ✅ `ai_timecycle_context_compact.md` targets 1000-1800 words |
+| Clearly separates first_patch/deferred/blocked | ✅ explicit categories in all JSON outputs |
+| visualsettings.dat without overclaiming | ✅ named keys only, no invented meanings |
+| cloudkeyframes.xml without overclaiming | ✅ color-only pattern noted as hypothesis/evidence |
+| weather.xml safe | ✅ deferred in all 3 Reduxes |
+| timecycle_mods_3.xml warned | ✅ blocked for mass numeric edits |
+| AI-ready for patch_plan.json | ⚠️ Almost — schema not defined yet; reports provide the right inputs |
+| No keys/RPFs in committed examples | ✅ only sanitized fake data in `examples/sample_outputs/` |
+
+---
+
+## 3. OpenRouter Model Tester — Architecture
+
+**Path:** `C:\Users\Marcel\Downloads\openrouter-model-tester`
+
+### Separation quality
+
+| Layer | File | Clean? |
+|---|---|---|
+| Types | `src/types.ts` | ✅ all interfaces centralized |
+| Constants | `src/constants.ts` | ✅ model lists, budget, defaults centralized |
+| Rule checks | `src/lib/ruleChecker.ts` | ✅ pure function, no side effects |
+| Prompt presets | `src/lib/promptPresets.ts` | ✅ fully declarative, 6 presets + split tasks |
+| Backend/API proxy | `server/index.ts` | ✅ Express server, key backend-only |
+| Auto eval | `src/components/AutoEvalPanel.tsx` | ✅ clean pipeline: planner → rule check → critic → revision → verdict |
+| Main UI | `src/App.tsx` | ✅ state management clean; provider/model/budget logic clear |
+
+**Architecture verdict: clean and extensible.** All key concerns are separated. Adding a new prompt preset, rule, or model requires touching only one file.
+
+---
+
+## 4. Safety
+
+| Safety check | Result |
+|---|---|
+| OpenRouter API key is backend-only | ✅ `server/index.ts` reads `process.env.OPENROUTER_API_KEY` only; never sent to frontend |
+| Paid model call requires confirmation | ✅ `setShowPaidConfirm(true)` gate in `App.tsx:handleRun`; cost estimate shown before confirming |
+| Free model failure does NOT silently switch to paid | ✅ free model failures set error + cooldown; paid path is explicit `modelMode === 'paid'` branch |
+| Budget cap enforced | ✅ `hardStopWhenBudgetExceeded: true`; per-request limit `$0.10`; session budget `$2.00` |
+| No patching/editing behavior in tester | ✅ no RPF write, no file edit, no scanner calls; pure model query + rule check |
+| Context files only sent as text | ✅ `FileReader.readAsText()` + appended to `contextText`; no binary upload path |
+| Committed examples contain no keys/RPFs/assets | ✅ examples use synthetic/sanitized data |
+| Auto Eval paid confirmation before critic/revision | ✅ `if (hasPaid && settings.requirePaidConfirmation) → setShowConfirm(true)` |
+| No infinite loops in Auto Eval | ✅ max 1 revision attempt (`maxRevisionAttempts: 1`); critic-after-revision requires `revisedAnswer` to be non-empty |
+| Budget tracked across entire session | ✅ `usedBudgetUsd` accumulates in `App.tsx`; passed down to `AutoEvalPanel` via `onBudgetUsed` |
+
+**Safety verdict: strong.** No obvious paths to accidental paid calls or budget blowout.
+
+---
+
+## 5. Model Selection
+
+| Check | Result |
+|---|---|
+| Free models fetched dynamically from OpenRouter | ✅ `/api/models/free` endpoint filters by `:free` suffix or zero-price |
+| Fallback free list used on fetch failure | ✅ `FALLBACK_FREE_MODELS` in constants.ts |
+| Paid models are a closed approved list | ✅ `PAID_MODELS` = 4 approved models only |
+| Custom model ID path exists | ✅ `__custom__` sentinel + text input |
+| deepseek free vs paid variant distinction | ⚠️ `FALLBACK_FREE_MODELS` includes `deepseek/deepseek-v4-flash:free`; `PAID_MODELS` includes `deepseek/deepseek-v4-flash` (no suffix). This is technically correct but may confuse users who see both. Recommend adding a UI note or distinct label. |
+| Auto eval uses separate model dropdowns for planner/critic | ✅ separate `plannerModel`/`criticModel` settings |
+
+---
+
+## 6. Prompt Presets Quality
+
+| Preset | Quality |
+|---|---|
+| `timecycle-plan` (full) | ✅ strong — 7 sections, cautious language, explicit validation requirement, tools section |
+| `compact-timecycle` (free models) | ✅ good — 5 sections, 1200-word limit, repeat no-XML/no-values rules |
+| `json-patch-plan` | ✅ strict — explicit JSON shape, `unsupportedClaims` field, binary blocked rule |
+| `grade-answer` (critic) | ✅ strong — 7 criteria, verdict enum, `shouldRevise`, `hardFails` array |
+| `free-model-test` | ✅ appropriate — 5 targeted questions, 600-word limit |
+| `paid-model-full` | ✅ comprehensive — 7 full sections + signal quality assessment |
+| Split task prompts (5 parts) | ✅ well-separated; useful for models that cut off |
+| CONTINUE_PROMPT | ✅ clean; no-repeat rule present |
+| REVISION_PROMPT_TEMPLATE | ✅ length-constraint rule included |
+
+**Notable gap:** `recommendedFiles` in all presets references the old corpus file names (`timecycle_ai_prompt_context.md`, `timecycle_focus_summary.md`, etc.). The R0.8.1 actual output file is `ai_timecycle_context_compact.md`. These recommended-file hints should be updated to match R0.8.1 output file names.
+
+Current `recommendedFiles`:
+```
+timecycle_ai_prompt_context.md       ← old name
+timecycle_focus_summary.md           ← old name
+timecycle_candidate_files.json       ← old name
+timecycle_value_change_summary.json  ← old name
+timecycle_patch_planning_questions.md ← old name
+```
+
+R0.8.1 actual files:
+```
+ai_timecycle_context_compact.md      ← primary compact context
+timecycle_file_rankings.json
+visualsettings_key_report.json
+cloudkeyframes_report.json
+weather_xml_report.json
+```
+
+---
+
+## 7. Auto Planner + Critic Flow
+
+The pipeline in `AutoEvalPanel.tsx` is:
+
+```
+1. PLANNER call → plannerAnswer
+2. RULE CHECKS (optional) → hard fail or pass with warnings
+3. AI CRITIC call (optional) → score /70, verdict, shouldRevise
+4. REVISION (optional, only if critic score < acceptThreshold) → revisedAnswer
+5. CRITIC AFTER REVISION (optional) → score revised answer
+6. FINAL VERDICT → accepted / usable_with_validator / rejected
+```
+
+| Flow check | Result |
+|---|---|
+| Planner failure stops pipeline immediately | ✅ `skipAll(STEP.RULE_CHECK)` called on planner fail |
+| Rule check hard fail stops pipeline | ✅ returns immediately after hard fail |
+| Rule check runs ALL checks (no early return per check) | ✅ all hard-fail checks run; all hard fails collected |
+| Critic score used for final decision | ✅ `avoidsHallucination < minHallucinationScore` → rejected |
+| Revision only runs when needed | ✅ `needsRevision = shouldRevise || total < acceptThreshold` |
+| Max revisions = 1 | ✅ `maxRevisionAttempts: 1` in defaults; no retry loop in code |
+| Budget tracked per step | ✅ `onBudgetUsed(cost)` called after each paid call |
+| Cost check before run | ✅ `if (totalCost > settings.maxCostPerRunUsd)` → alert |
+| Save as JSON or Markdown | ✅ both supported via `handleSave(fmt)` |
+| Paid confirmation before full run | ✅ confirmed |
+| Critic cost estimate uses `5000` char overhead for context | ⚠️ estimate = `plannerInputLen + 5000` — this is a rough guess. Real critic context = plannerAnswer (could be 5000-15000 chars). May under-estimate cost for large paid-model planner outputs. Non-critical but worth noting. |
+
+---
+
+## 8. Rule Checker — False Positive / False Negative Analysis
+
+This is the most important area for fixing before trusting Auto Eval results.
+
+### Hard fails — known issues
+
+#### 1. `no_binary_editing` — **LOW false-positive risk** (improved in recent version)
+
+Current behavior: per-sentence safe-phrase bypass. If the sentence containing a binary ext also contains a safe phrase (blocked, deferred, avoid, etc.), the rule is skipped.
+
+**Remaining edge case:** A model that writes `"We should avoid editing .ytd files and instead edit .xml files"` — the safe phrase `avoid` is present on the same sentence as `.ytd`, so no hard fail fires. ✅ This is correct behavior.
+
+**Edge case that could still false-positive:** A model that writes a section header like `"Blocked binary files: .ytd, .ypt"` followed by a separate sentence `"The .ytd format stores textures."` — the second sentence has `.ytd` without a safe phrase and without a dangerous verb. The `DANGEROUS_VERB_RE` check requires an editing verb, so this **should not** fire. ✅
+
+**Verdict: No significant false-positive risk here.**
+
+#### 2. `no_weather_xml_first` — **MEDIUM false-positive risk**
+
+Current behavior: line-by-line check with 3-line section context lookback.
+
+**Confirmed false-positive case:** A model that correctly writes a section like:
+
+```
+### Files to Avoid
+- weather.xml: deferred, global system file
+```
+
+This fires correctly (safe phrase `deferred` is present). ✅
+
+**Problematic case:** A model that writes a first-patch section as a numbered list with file paths, then a separate deferred section:
+
+```
+### Recommended First Patch
+1. visualsettings.dat
+2. cloudkeyframes.xml
+
+### Deferred Files
+- weather.xml (global — risky)
+```
+
+Here `weather.xml` appears under `Deferred Files` — safe phrases `deferred` and `risky` appear on the same line. ✅ This works.
+
+**Real false-positive risk:** If a model writes weather.xml in a "Detected Changes" or "Scanner findings" context — e.g., `"weather.xml was modified in all 3 Reduxes (272 numeric changes)"` — without saying it's deferred or risky. The line has no safe phrase, no first-patch keyword, and no dangerous verb. The `FIRST_PATCH_KWORDS` check requires a first-patch keyword on the line or in preceding 3 lines. This **should not** fire. ✅
+
+**True false-positive case:** A model writes:
+
+```
+## Analysis
+
+scanner detected changes in:
+- weather.xml: 272 numeric changes (context note — not first patch target)
+```
+
+The phrase "not first patch" is present but uses short form. The `SAFE_PHRASES` list includes `'not first'` — ✅ this should be caught.
+
+**Real gap found:** The `FIRST_PATCH_KWORDS` list includes `'target files'`. A model that writes `"Target files for analysis: weather.xml, visualsettings.dat"` in an analysis-only (non-patch) section could potentially trigger a false positive if the section context contains `target files` AND `weather.xml`. The intent may be "these are files the scanner targeted", not "these are files to patch first". **Recommend: remove `'target files'` from `FIRST_PATCH_KWORDS` or replace with `'target files for first patch'`.**
+
+#### 3. `no_mass_timecycle_edits` — **LOW false-positive risk**
+
+Only fires on specific regex patterns for mass numeric edits. A model correctly warning about mass edits does not trigger this. ✅
+
+#### 4. `requires_validation_plan` — **LOW false-positive risk**
+
+Only checks for `validation`, `verify`, `check after`, `validate`. Any model that mentions a validation section passes. ✅
+
+#### 5. `requires_files_to_avoid` — **LOW false-positive risk**
+
+Only checks for `avoid`, `blocked`, `do not edit`, `should not`, `must not`, `defer`. Very easy to pass. ✅
+
+#### 6. `no_certain_game_claims` — **LOW false-positive risk**
+
+Specific phrases only. Models would have to use exact language like "this parameter controls exactly" or "definitely causes sky". ✅
+
+#### 7. `no_full_xml_output` — **LOW false-positive risk**
+
+Only fires on actual XML tag patterns with substantial content. ✅
+
+#### 8. `no_unrelated_components` — **MEDIUM false-positive risk**
+
+**Confirmed issue:** The check fires if `(expect|modify|patch|change|edit|update)` appears before a component name like `tracer` or `hit_effect`. The bypass pattern checks for `avoid.{0,60}${component}` or `do not.{0,60}${component}`.
+
+**False-positive case:** A model that writes:
+
+```
+Expected changes that SHOULD FAIL validation:
+- tracer changes unexpected
+- hit_effect changes unexpected
+```
+
+The verb `"expected"` is followed by the component name in an obviously safe context. But the regex is `(expect)\\s+tracer` — this **will match** because `expect` precedes `tracer`. The bypass pattern checks for `avoid.{0,60}tracer` — if not present on the same region, **this hard-fails**. **This is a confirmed false-positive: the validation plan section uses "expected" to mean "we expect NOT to see these changes", but the rule fires.**
+
+**Fix:** Extend bypass to include patterns like `should fail`, `unexpected change`, `expect.*not`, `fail validation`, `unexpected.*tracer`, or require the verb+component pattern to NOT be in a validation/fail context.
+
+#### 9. `requires_scanner_grounding` — **MEDIUM false-positive risk**
+
+Checks for: `scanner`, `scan report`, `scanner context`, `scanner output`, `scanner report`, `analysis`, `provided context`.
+
+**The word `analysis` is in the bypass list.** Most model outputs will say "analysis" somewhere. ✅ Low practical false-positive risk.
+
+**Edge case:** A model that writes a very structured JSON-format answer (from the `json-patch-plan` preset) may not use any of these words in the JSON output. If the answer is entirely JSON without prose, none of these keywords appear. **This is a real false-positive risk for JSON-mode outputs.** Recommend: add `"context"` or skip `requires_scanner_grounding` when the answer starts with `{`.
+
+### Warnings — issues
+
+#### `weather_state_files_early` — **MEDIUM false-positive risk (key issue)**
+
+This warning fires when `w_foggy.xml`, `w_clouds.xml`, etc. appear on a line that includes a first-patch keyword. 
+
+**Problem:** The scanner's own `timecycle_file_rankings.json` recommends `w_foggy.xml` and `w_clouds.xml` as `first_patch` candidates. A model correctly following scanner guidance will place these in a first-patch section. The warning then fires even though the model is doing the right thing.
+
+The warning says: "Consider Phase 2 after visualsettings/cloudkeyframes/timecycle_mods_1 validate." This is a legitimate caution, but it should not override scanner guidance that explicitly recommends these files.
+
+**Recommended fix:** Downgrade `weather_state_files_early` from a warning to an info note, or suppress it if the surrounding context makes clear these are second-tier (not the very first files). Alternatively, narrow the trigger: only fire if `w_foggy.xml` appears in a first-patch section that does NOT include a qualifier like "after timecycle/visualsettings" or "phase 2 of first patch".
+
+#### `binary_files_mentioned_safe` — **CONFUSING (not a false positive, but misleading UX)**
+
+This warning fires when binary files are mentioned in a safe/blocked context. It says "Rule check passed." This is technically correct but confusing: it's an informational warning that tells the user everything is fine, yet it appears as a warning. Models that correctly mention binary files as blocked will always trigger this. **Recommend: change to a `passed_with_note` level or suppress entirely.**
+
+### Summary table of rule issues
+
+| Rule | Issue type | Severity | Fix |
+|---|---|---|---|
+| `no_unrelated_components` | False positive: "expected" used in validation plan context | HIGH | Extend bypass to include `should fail`, `unexpected change`, `fail validation` near component names |
+| `weather_state_files_early` (warning) | False positive: fires when scanner recommends w_foggy/w_clouds as first_patch | MEDIUM | Narrow trigger or downgrade to info; suppress when context is "after validating X" |
+| `no_weather_xml_first` | `'target files'` in FIRST_PATCH_KWORDS too broad | LOW | Replace with `'target files for first patch'` |
+| `requires_scanner_grounding` | JSON-mode answers have no prose keywords | LOW | Skip rule or add `"context"` keyword; or skip when answer starts with `{` |
+| `binary_files_mentioned_safe` | Confusing warn for correct behavior | UX | Change to info/note level or suppress |
+
+---
+
+## 9. OpenRouter Error Handling
+
+| Error scenario | Handling | Quality |
+|---|---|---|
+| HTTP 429 (rate limit) | `server/index.ts` returns `httpStatus: 429, isFreeModel: bool`; `App.tsx` starts 8s cooldown + suggests next model | ✅ good |
+| Upstream provider throttling | `orErrorMeta.provider_name` returned in error response | ✅ basic |
+| Retry-After header | Not parsed/forwarded | ⚠️ missing — 429 always uses hardcoded 8s cooldown |
+| Empty response (`answer === ''`) | Returns `ok: false, code: EMPTY_RESPONSE` | ✅ |
+| finish_reason = length | `finishReason` and `nativeFinishReason` returned; `ResultPanel` shows Continue button | ✅ |
+| Context too large | OpenRouter returns error message; passed through as `orErr.message` | ✅ basic — no special handling |
+| Model not found | OpenRouter returns 404/error; passed through | ✅ basic |
+| Credits/spend cap issue | OpenRouter returns error message; passed through | ✅ basic — no special user message |
+| Network error (fetch throws) | `catch` returns `code: NETWORK_ERROR` | ✅ |
+| Invalid JSON from OpenRouter | `catch JSON.parse` returns `code: PARSE_ERROR` | ✅ |
+| Missing API key | Returns `code: MISSING_API_KEY` with setup instruction | ✅ |
+
+**Notable gap:** `Retry-After` header from OpenRouter is not parsed. The cooldown is hardcoded to 8 seconds. For rate-limited free models, OpenRouter sometimes specifies a longer retry window. Low priority but worth adding.
+
+---
+
+## 10. UX Assessment
+
+| UX item | Status |
+|---|---|
+| Run same test across multiple models | ✅ Compare mode (2 models) + Auto Eval (fixed planner/critic models) |
+| Clear which files to upload | ⚠️ `recommendedFiles` list shown in preset UI but uses **old file names** (see §6 above) |
+| Selected files visible | ✅ uploaded file list shown with name + size |
+| Token counts visible | ✅ usage tokens shown in result panel |
+| Cost estimates visible | ✅ cost shown per Auto Eval step + total |
+| Auto Eval result readable | ✅ step-by-step status + expandable planner answer + critic scores table |
+| False rejections easy to understand | ⚠️ Rule check messages are clear, but `binary_files_mentioned_safe` warning is confusing (appears to be a problem when it's actually OK) |
+| Cooldown feedback | ✅ countdown + suggested next model shown |
+| Provider switching (Ollama vs OpenRouter) | ✅ clean provider toggle |
+
+---
+
+## 11. Missing Must-Haves Before Next Phase
+
+The next phase is: `patch_plan.json` schema → plan validator → deterministic editor tools.
+
+| Item | Priority | Why needed |
+|---|---|---|
+| **`patch_plan.json` schema definition** | CRITICAL | Before building validator or editors, the schema must be finalized. Scanner reports now provide correct inputs but there is no agreed output schema. |
+| **Plan validator** | HIGH | Auto Eval currently only rule-checks and AI-grades the prose answer. A deterministic validator that checks if a patch plan JSON is safe/well-formed is required before any editor. |
+| **Rule checker fixes** (§8 above) | HIGH | `no_unrelated_components` false positive on validation plan context will reject good answers that correctly name tracer/hit_effect as unexpected. |
+| **recommendedFiles update** in prompt presets | MEDIUM | Points to old corpus file names; causes confusion about which files to upload. Easy fix. |
+| **Rust binary copy step** in build scripts | MEDIUM | Current `build_windows.ps1` and documentation do not mention the manual copy step. Developers building from source will silently get stale binary. |
+| **Retry-After header parsing** | LOW | Hardcoded 8s cooldown; OpenRouter sometimes specifies longer. |
+| **deepseek free/paid label clarity** | LOW | Both appear in dropdowns with similar names; confusing but not unsafe. |
+
+---
+
+## 12. Recommended Next Implementation Phase
+
+**Phase R0.9.1 — Fixes and patch_plan.json foundation**
+
+1. Fix rule checker `no_unrelated_components` false positive (validation plan context)
+2. Fix `weather_state_files_early` warning trigger (too broad for w_foggy/w_clouds)
+3. Update `recommendedFiles` in `promptPresets.ts` to match R0.8.1 output file names
+4. Document/script the Rust binary copy step in `build_windows.ps1`
+5. Define `patch_plan.json` schema v1 (candidateFiles, allowedOperations, blockedFiles, validationRules, requiredTools, goal, schemaVersion)
+6. Add scanner command to validate a `patch_plan.json` against baseline scan data
+
+Do not implement editor tools until the validator exists.
+
+---
+
+## 13. Manual Test Checklist
+
+### OpenRouter Model Tester
+
+- [ ] Start backend: `npm run dev` → server on port 3001, API key confirmed
+- [ ] Open `http://localhost:5173`
+- [ ] Load preset: **Compact Plan** → verify system/user prompts update
+- [ ] Upload `ai_timecycle_context_compact.md` from a Redux diff output
+- [ ] Run with free model (openrouter/free or owl-alpha) → verify result appears
+- [ ] Verify cost = $0.00 for free model
+- [ ] Switch to Paid mode → verify confirm modal appears before running
+- [ ] Cancel paid confirm → verify no call was made
+- [ ] Verify `usedBudgetUsd` stays $0.00 after cancel
+- [ ] Force a 429 by running repeatedly → verify cooldown countdown + next model suggestion
+- [ ] Check key status → verify balance/credits shown correctly
+- [ ] Load **JSON Patch Plan** preset → run → verify JSON output structure
+
+### Auto Eval
+
+- [ ] Switch to Auto Eval tab
+- [ ] Upload `ai_timecycle_context_compact.md`
+- [ ] Enable rule checks + AI critic
+- [ ] Run → verify 6-step pipeline progresses
+- [ ] Verify planner answer appears in panel
+- [ ] Verify critic score table appears
+- [ ] Verify final verdict shown as accepted / usable_with_validator
+- [ ] Test a known bad answer (paste one that says "edit weather.xml first") → verify hard fail fires
+- [ ] Test a known good answer that mentions tracer in a validation context → **verify this does NOT false-fail** (known bug §8)
+- [ ] Save result as Markdown → verify file downloads with correct content
+- [ ] Save result as JSON → verify file downloads
+
+### Scanner timecycle reports
+
+- [ ] Run scanner: `.\build\Release\redux_rpf_scanner.exe diff-against-baseline --baseline <baseline.json> --modded <update_modded.rpf> --keys <keys_dir> --out <output_dir> --analyze-text --build-learning-corpus`
+- [ ] Verify `timecycle_intelligence/` folder created in output
+- [ ] Verify all 9 files present
+- [ ] Verify `ai_timecycle_context_compact.md` is under ~2000 words
+- [ ] Verify `timecycle_file_rankings.json` has `recommendedPhase` field on all entries
+- [ ] Verify `risky_files_report.json` includes weather.xml and timecycle_mods_3.xml
+- [ ] Verify `cloudkeyframes_report.json` has `color_only_pattern_confirmed` field
+- [ ] Upload `ai_timecycle_context_compact.md` to tester → run Compact Plan → check output quality
+
+### Combined AI testing workflow
+
+- [ ] Use `aggregate_ai_timecycle_context_compact.md` as context in tester
+- [ ] Run with free model → verify it references all 3 Reduxes
+- [ ] Run with paid model (with confirmation) → compare depth of analysis
+- [ ] Run Auto Eval → verify aggregate context produces better scores than single-Redux context
+- [ ] Verify no raw game file content appears in model output
+- [ ] Verify no keys/RPF paths appear in model output
 | `ai_file_explanations.json` | **missing** | No explanation generator; should not be added yet. |
 | `ai_training_notes.jsonl` | **missing** | No corpus notes pipeline; should not be added yet. |
 | `component_frequency.json` | **missing** | Could later be derived from compare outputs, but not implemented. |
