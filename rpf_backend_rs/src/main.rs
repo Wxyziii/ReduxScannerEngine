@@ -16,6 +16,7 @@ mod diff;
 mod editors;
 mod export;
 mod inventory;
+mod rpf_writer;
 mod staging;
 mod validators;
 
@@ -327,6 +328,7 @@ struct Args {
     workspace: Option<PathBuf>,
     stage_dir: Option<PathBuf>,
     bundle_dir: Option<PathBuf>,
+    target_rpf: Option<PathBuf>,
     changed_files: Vec<String>,
     operation_id: Option<String>,
 }
@@ -382,6 +384,10 @@ Commands:
                 patch_plan.json, diff_report.json (and stage/apply reports if available).
                 Does not modify the source workspace, staged files, or any RPF archive.
                 Exits 1 if the export is blocked.
+  plan-rpf-write --bundle-dir <path> --target-rpf <path> [--out <out.json>]
+                Plan a future controlled RPF write from an exported bundle.
+                PLANNING ONLY: never opens or modifies the target archive.
+                safeToWrite is always false; real RPF writing is not implemented.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -411,6 +417,11 @@ Notes:
     files (bundle_manifest.json, patch_plan.json, diff_report.json, plus stage/apply reports
     when present). It never modifies the source workspace, the staged files, or any RPF
     archive — it only writes into the bundle directory.
+  - plan-rpf-write is PLANNING ONLY. It reads an exported bundle and produces a structured
+    RPF write plan with safety gates (backup, restore, hash verification, manual
+    confirmation). It never opens, reads, or modifies the target archive. safeToWrite is
+    always false and the real_rpf_writer_not_implemented gate blocks any actual write.
+    Real RPF archive writing is intentionally not implemented in this milestone.
 "#
     );
 }
@@ -463,6 +474,7 @@ fn parse_args() -> Result<Args> {
         workspace: None,
         stage_dir: None,
         bundle_dir: None,
+        target_rpf: None,
         changed_files: Vec::new(),
         operation_id: None,
     };
@@ -574,6 +586,11 @@ fn parse_args() -> Result<Args> {
             "--bundle-dir" => {
                 args.bundle_dir = Some(PathBuf::from(
                     it.next().context("missing value for --bundle-dir")?,
+                ))
+            }
+            "--target-rpf" => {
+                args.target_rpf = Some(PathBuf::from(
+                    it.next().context("missing value for --target-rpf")?,
                 ))
             }
             "--analyze-text" => args.analyze_text = true,
@@ -10765,6 +10782,21 @@ fn main() -> Result<()> {
             if !report.safe_exported {
                 std::process::exit(1);
             }
+        }
+        "plan-rpf-write" => {
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("plan-rpf-write requires --bundle-dir")?;
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("plan-rpf-write requires --target-rpf")?;
+            // Planning only — this never opens or modifies the target archive,
+            // and safe_to_write is always false in this milestone.
+            let plan = rpf_writer::plan::build_rpf_write_plan(&bundle_dir, &target_rpf)
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &plan)?;
         }
         _ => {
             usage();

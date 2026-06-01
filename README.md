@@ -43,6 +43,14 @@ Packages patched staged files plus their reports into a portable bundle folder.
 It never modifies the source workspace, the staged files, or any RPF archive.
 See [T0_4_6_PATCH_BUNDLE_EXPORT.md](docs/T0_4_6_PATCH_BUNDLE_EXPORT.md) for details.
 
+### Phase T0.5.0 — RPF Writer Planning + Safety Gate Design
+Writer **planning and safety-gate design only** — this is **not** real archive editing.
+`plan-rpf-write` reads an exported bundle and emits a structured write plan with
+safety gates (backup, restore, hash verification, manual confirmation). It never
+opens or modifies any RPF archive; `safeToWrite` is always false and real RPF
+writing is intentionally not implemented.
+See [T0_5_0_RPF_WRITER_PLANNING.md](docs/T0_5_0_RPF_WRITER_PLANNING.md) for details.
+
 ## What this project must not do
 
 This scanner should not:
