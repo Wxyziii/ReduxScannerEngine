@@ -16,6 +16,7 @@ mod diff;
 mod editors;
 mod export;
 mod inventory;
+mod rpf_backup;
 mod rpf_writer;
 mod staging;
 mod validators;
@@ -329,6 +330,7 @@ struct Args {
     stage_dir: Option<PathBuf>,
     bundle_dir: Option<PathBuf>,
     target_rpf: Option<PathBuf>,
+    backup_dir: Option<PathBuf>,
     changed_files: Vec<String>,
     operation_id: Option<String>,
 }
@@ -388,6 +390,10 @@ Commands:
                 Plan a future controlled RPF write from an exported bundle.
                 PLANNING ONLY: never opens or modifies the target archive.
                 safeToWrite is always false; real RPF writing is not implemented.
+  backup-rpf    --target-rpf <path> --backup-dir <path> [--out <out.json>]
+                Copy a target .rpf into a backup directory and verify it by SHA-256.
+                Read/copy only: the original target archive is never modified.
+                safeForFutureWrite is true only when the backup hash matches.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -422,6 +428,10 @@ Notes:
     confirmation). It never opens, reads, or modifies the target archive. safeToWrite is
     always false and the real_rpf_writer_not_implemented gate blocks any actual write.
     Real RPF archive writing is intentionally not implemented in this milestone.
+  - backup-rpf is a READ/COPY-ONLY preflight. It copies a target .rpf into a backup
+    directory and verifies the copy by SHA-256. The original target archive is never
+    modified or written. A successful, hash-verified backup is a prerequisite for any
+    future controlled RPF writing. No real RPF writing is performed here.
 "#
     );
 }
@@ -475,6 +485,7 @@ fn parse_args() -> Result<Args> {
         stage_dir: None,
         bundle_dir: None,
         target_rpf: None,
+        backup_dir: None,
         changed_files: Vec::new(),
         operation_id: None,
     };
@@ -591,6 +602,11 @@ fn parse_args() -> Result<Args> {
             "--target-rpf" => {
                 args.target_rpf = Some(PathBuf::from(
                     it.next().context("missing value for --target-rpf")?,
+                ))
+            }
+            "--backup-dir" => {
+                args.backup_dir = Some(PathBuf::from(
+                    it.next().context("missing value for --backup-dir")?,
                 ))
             }
             "--analyze-text" => args.analyze_text = true,
@@ -10797,6 +10813,24 @@ fn main() -> Result<()> {
             let plan = rpf_writer::plan::build_rpf_write_plan(&bundle_dir, &target_rpf)
                 .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &plan)?;
+        }
+        "backup-rpf" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("backup-rpf requires --target-rpf")?;
+            let backup_dir = args
+                .backup_dir
+                .clone()
+                .context("backup-rpf requires --backup-dir")?;
+            // Read-only preflight: copies the target into backup_dir and verifies
+            // by SHA-256. The original target archive is never modified.
+            let report = rpf_backup::backup::backup_rpf_archive(&target_rpf, &backup_dir)
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.safe_for_future_write {
+                std::process::exit(1);
+            }
         }
         _ => {
             usage();

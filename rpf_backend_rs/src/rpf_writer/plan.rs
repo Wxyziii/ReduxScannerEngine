@@ -281,7 +281,9 @@ pub fn build_rpf_write_plan(
         "backup_required",
         true,
         GateSeverity::Blocking,
-        "A full backup of the target archive must be created before any write.",
+        "A full backup of the target archive must be created before any write. \
+         Use `backup-rpf --target-rpf <path> --backup-dir <path>`; future writing \
+         will require a successful, hash-verified RpfBackupReport.",
     ));
     gates.push(gate(
         "restore_plan_required",

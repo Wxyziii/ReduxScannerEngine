@@ -51,6 +51,13 @@ opens or modifies any RPF archive; `safeToWrite` is always false and real RPF
 writing is intentionally not implemented.
 See [T0_5_0_RPF_WRITER_PLANNING.md](docs/T0_5_0_RPF_WRITER_PLANNING.md) for details.
 
+### Phase T0.5.1 — RPF Backup + Hash Verification Preflight
+`backup-rpf` copies a target `.rpf` into a backup directory and verifies the copy
+by SHA-256. It is **read/copy only** — the original target archive is never
+modified, and real RPF writing is still not implemented. A hash-verified backup is
+a prerequisite for any future controlled write.
+See [T0_5_1_RPF_BACKUP_PREFLIGHT.md](docs/T0_5_1_RPF_BACKUP_PREFLIGHT.md) for details.
+
 ## What this project must not do
 
 This scanner should not:
