@@ -19,6 +19,7 @@ mod inventory;
 mod rpf_adapter;
 mod rpf_backup;
 mod rpf_compare;
+mod rpf_entry_manifest;
 mod rpf_external;
 mod rpf_probe;
 mod rpf_readiness;
@@ -428,6 +429,11 @@ Commands:
                 readyToWrite is always false; never opens or modifies the target
                 archive, never modifies the bundle, never creates backups, and
                 never executes external tools.
+  rpf-entry-manifest --bundle-dir <path> [--target-rpf <path>] [--out <out.json>]
+                Build a future-writer entry manifest mapping exported bundle files
+                to archive-relative paths (size + SHA-256, path safety, duplicate
+                detection). Read-only: never parses/opens/writes the target RPF and
+                never executes external tools. readyForWrite is always false.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -10953,6 +10959,23 @@ fn main() -> Result<()> {
             )
             .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "rpf-entry-manifest" => {
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("rpf-entry-manifest requires --bundle-dir")?;
+            // Read-only: reads bundle_manifest.json and walks files/. Never parses
+            // or modifies the target RPF; never executes external tools.
+            let report = rpf_entry_manifest::manifest::build_rpf_entry_manifest(
+                &bundle_dir,
+                args.target_rpf.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if report.status != rpf_entry_manifest::model::RpfEntryManifestStatus::Built {
+                std::process::exit(1);
+            }
         }
         _ => {
             usage();

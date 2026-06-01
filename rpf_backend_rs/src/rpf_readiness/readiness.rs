@@ -383,6 +383,13 @@ pub fn build_write_readiness_report(
         "External tool plan loaded.",
     ));
     gates.push(gate(
+        "entry_manifest_available",
+        true,
+        RpfReadinessSeverity::Info,
+        "A future-writer entry manifest can be produced with `rpf-entry-manifest \
+         --bundle-dir <path>`; it is informational and does not enable writing.",
+    ));
+    gates.push(gate(
         "external_archive_mutation_allowed",
         external_mutation_allowed,
         RpfReadinessSeverity::Blocking,

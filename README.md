@@ -103,6 +103,15 @@ modifies the target archive, never modifies the bundle, never creates backups, a
 never executes external tools.
 See [T0_5_6_WRITE_READINESS_REPORT.md](docs/T0_5_6_WRITE_READINESS_REPORT.md) for details.
 
+### Phase T0.5.7 — RPF Entry Manifest Schema
+`rpf-entry-manifest` produces a **read-only** bundle-to-archive-entry mapping: the
+future writer's input format. It walks an exported bundle's `files/` and records,
+for each file, the normalized archive-relative path, size, and SHA-256, with path
+safety validation and duplicate detection. It does not parse, open, or write any
+RPF archive and does not execute external tools; `readyForWrite` stays false until
+a controlled writer adapter exists.
+See [T0_5_7_RPF_ENTRY_MANIFEST_SCHEMA.md](docs/T0_5_7_RPF_ENTRY_MANIFEST_SCHEMA.md) for details.
+
 ## What this project must not do
 
 This scanner should not:
