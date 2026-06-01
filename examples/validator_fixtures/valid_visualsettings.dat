@@ -1,0 +1,7 @@
+# visualsettings.dat
+# Adaptation
+Adaptation.MaxLum 1.0
+Adaptation.MinLum 0.1
+# Tonemapping
+Tonemapping.FilmicCurve 1
+Tonemapping.WhitePoint 1.0

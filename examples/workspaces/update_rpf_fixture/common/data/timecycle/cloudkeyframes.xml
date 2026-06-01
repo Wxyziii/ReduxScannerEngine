@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FIXTURE FILE — NOT real GTA data -->
+<CloudKeyframes>
+  <Frame index="0" r="255" g="255" b="255" a="255" />
+  <Frame index="1" r="200" g="210" b="220" a="255" />
+</CloudKeyframes>

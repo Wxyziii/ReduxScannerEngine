@@ -1,0 +1,9 @@
+{
+  "version": "1.0",
+  "operations": [
+    { "type": "visualsettings", "path": "common/data/visualsettings.dat" },
+    { "type": "xml_color", "path": "common/data/timecycle/cloudkeyframes.xml" },
+    { "type": "xml_color", "path": "common/data/timecycle/timecycle_mods_1.xml" }
+  ],
+  "targetFiles": ["visualsettings.dat", "cloudkeyframes.xml", "timecycle_mods_1.xml"]
+}

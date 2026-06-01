@@ -30,6 +30,14 @@ It can:
   - sky/timecycle
   - kill effect
 
+### Phase T0.3 — XML/DAT Static Validators
+Built-in read-only validators for XML, DAT, and scanner scope.
+See [T0_3_STATIC_VALIDATORS.md](docs/T0_3_STATIC_VALIDATORS.md) for details.
+
+### Phase T0.4.1 — Deterministic Editor Contract + Dry-Run Framework
+Safety framework for future file editors.
+See [T0_4_1_EDITOR_DRY_RUN_FRAMEWORK.md](docs/T0_4_1_EDITOR_DRY_RUN_FRAMEWORK.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

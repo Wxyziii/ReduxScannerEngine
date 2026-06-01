@@ -1,0 +1,5 @@
+# visualsettings.dat
+This line is broken
+Adaptation.MaxLum = 1.0
+adaptivedof.NearBlur 0.5
+UnknownFamily.Value 123

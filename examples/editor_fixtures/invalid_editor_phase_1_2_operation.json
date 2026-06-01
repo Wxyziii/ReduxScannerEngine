@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "operations": [
+    {
+      "id": "op_bad_phase",
+      "phase": "phase_1_2",
+      "path": "common/data/timecycle/timecycle_mods_3.xml",
+      "tool": "xml_timecycle_editor",
+      "type": "xml_color_like_candidate",
+      "intent": "Hypothesis: phase 1.2 test.",
+      "validationRequired": ["xml_validator"]
+    }
+  ]
+}

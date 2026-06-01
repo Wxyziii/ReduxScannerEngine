@@ -46,3 +46,6 @@ Thumbs.db
 # Local artifacts
 /.copilot/
 .aider*
+
+# Staging output (created by the stage command)
+/.tmp/

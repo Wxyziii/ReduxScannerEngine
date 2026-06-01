@@ -11,6 +11,13 @@ use tempfile::TempDir;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
+mod apply;
+mod diff;
+mod editors;
+mod inventory;
+mod staging;
+mod validators;
+
 const BACKEND_NAME: &str = "rpf_backend_rs";
 const BACKEND_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SCHEMA_VERSION: &str = "2.0";
@@ -313,6 +320,13 @@ struct Args {
     scanner_name: Option<String>,
     scanner_version: Option<String>,
     baseline: Option<PathBuf>,
+    file: Option<PathBuf>,
+    vmode: Option<String>,
+    patch_plan: Option<PathBuf>,
+    workspace: Option<PathBuf>,
+    stage_dir: Option<PathBuf>,
+    changed_files: Vec<String>,
+    operation_id: Option<String>,
 }
 
 fn usage() {
@@ -336,6 +350,30 @@ Commands:
   classify-rpf  --archive <unknown.rpf> --baseline <baseline_output_dir>
                 --keys <keys_dir> --out <classification.json>
                 [--depth 3]
+  validate-xml  --file <path> [--baseline <path>] [--vmode <mode>] [--out <out.json>]
+  validate-dat  --file <path> [--baseline <path>] [--vmode <mode>] [--out <out.json>]
+  validate-scope --patch-plan <path> --changed-files <comma_list_or_json_path> [--out <out.json>]
+  dry-run       --plan <path> [--workspace <path>] [--out <out.json>]
+                Simulate applying a PatchPlan without modifying any real files or RPF archives.
+                When --workspace is provided, target file existence is verified against the
+                extracted workspace directory. Exits 1 if safe_to_apply is false.
+  inventory     --workspace <path> [--out <out.json>]
+                Scan an extracted RPF workspace directory and report all files found.
+                Read-only. Never modifies any file.
+  stage         --plan <path> --workspace <path> --stage-dir <path> [--out <out.json>]
+                Copy validated PatchPlan target files from the workspace into a staging directory.
+                Does not modify the source workspace or any RPF archive.
+                Exits 1 if staging is blocked.
+  apply-stage   --plan <path> --stage-dir <path> [--out <out.json>]
+                Apply supported text PatchPlan operations to files inside the staging directory.
+                Only modifies staged copies — source workspace and RPF archives are never touched.
+                Supported op types: text_replace, text_append, text_prepend.
+                Exits 1 if any operation is blocked or fails.
+  diff-stage    --workspace <path> --stage-dir <path> [--out <out.json>]
+                Compare workspace files against their staged (patched) counterparts.
+                Read-only — neither workspace nor stage directory is modified.
+                Shows per-file change status, line counts, and preview hunks.
+  editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
 Notes:
@@ -347,6 +385,18 @@ Notes:
     baseline_update_tree_fingerprint.json, baseline_metadata.json into the --out folder.
   - classify-rpf quick-scans an unknown .rpf and compares its tree against the clean baseline
     to detect renamed update.rpf files. Output: classification.json.
+  - dry-run does not modify update.rpf or any real game files. It only evaluates the
+    PatchPlan and reports what would happen.
+  - inventory is read-only. --workspace points to an extracted RPF-like directory tree.
+    No real game files are modified.
+  - stage copies target files to a separate staging directory. The source workspace
+    and all RPF archives remain untouched.
+  - apply-stage modifies only files inside --stage-dir. The source workspace is never
+    read or written. RPF archives are not modified. This is the first actual patch
+    application layer, but still sandboxed to the staging directory.
+  - diff-stage compares workspace files against staged (patched) counterparts. It is
+    read-only and does not modify any file. Use it to preview what a patch changed
+    before any export or future RPF writing step.
 "#
     );
 }
@@ -393,6 +443,13 @@ fn parse_args() -> Result<Args> {
         scanner_name: None,
         scanner_version: None,
         baseline: None,
+        file: None,
+        vmode: None,
+        patch_plan: None,
+        workspace: None,
+        stage_dir: None,
+        changed_files: Vec::new(),
+        operation_id: None,
     };
 
     let mut explicit_mode: Option<ScanMode> = None;
@@ -457,6 +514,46 @@ fn parse_args() -> Result<Args> {
             "--baseline" => {
                 args.baseline = Some(PathBuf::from(
                     it.next().context("missing value for --baseline")?,
+                ))
+            }
+            "--file" => {
+                args.file = Some(PathBuf::from(
+                    it.next().context("missing value for --file")?,
+                ))
+            }
+            "--vmode" => args.vmode = Some(it.next().context("missing value for --vmode")?),
+            "--patch-plan" => {
+                args.patch_plan = Some(PathBuf::from(
+                    it.next().context("missing value for --patch-plan")?,
+                ))
+            }
+            "--plan" => {
+                args.patch_plan = Some(PathBuf::from(
+                    it.next().context("missing value for --plan")?,
+                ))
+            }
+            "--changed-files" => {
+                let value = it.next().context("missing value for --changed-files")?;
+                if value.ends_with(".json") {
+                    let content =
+                        fs::read_to_string(&value).context("failed to read changed-files JSON")?;
+                    args.changed_files = serde_json::from_str(&content)
+                        .context("failed to parse changed-files JSON")?;
+                } else {
+                    args.changed_files = value.split(',').map(|s| s.trim().to_string()).collect();
+                }
+            }
+            "--operation-id" => {
+                args.operation_id = Some(it.next().context("missing value for --operation-id")?)
+            }
+            "--workspace" => {
+                args.workspace = Some(PathBuf::from(
+                    it.next().context("missing value for --workspace")?,
+                ))
+            }
+            "--stage-dir" => {
+                args.stage_dir = Some(PathBuf::from(
+                    it.next().context("missing value for --stage-dir")?,
                 ))
             }
             "--analyze-text" => args.analyze_text = true,
@@ -6714,9 +6811,8 @@ fn build_timecycle_file_rankings(
 
     {
         let mut score = 960;
-        let mut evidence = vec![
-            "Filename suggests global visual settings with named parameters.".to_string(),
-        ];
+        let mut evidence =
+            vec!["Filename suggests global visual settings with named parameters.".to_string()];
         let mut confidence = "low".to_string();
         if let Some(entry) = visual_entry {
             evidence.push(format!(
@@ -6775,7 +6871,9 @@ fn build_timecycle_file_rankings(
                 entry.colorLikeChanges, entry.numericChanges
             ));
             if entry.colorLikeChanges > 0 && entry.numericChanges == 0 {
-                evidence.push("Only color-like changes were observed in the analyzed diff.".to_string());
+                evidence.push(
+                    "Only color-like changes were observed in the analyzed diff.".to_string(),
+                );
                 confidence = "high".to_string();
             } else if entry.colorLikeChanges > 0 {
                 evidence.push(
@@ -6814,7 +6912,8 @@ fn build_timecycle_file_rankings(
 
     {
         let mut score = 760;
-        let mut evidence = vec!["Primary timecycle mods file with a sky-oriented name.".to_string()];
+        let mut evidence =
+            vec!["Primary timecycle mods file with a sky-oriented name.".to_string()];
         let mut confidence = "low".to_string();
         if let Some(entry) = mods1_entry {
             evidence.push(format!(
@@ -6858,7 +6957,8 @@ fn build_timecycle_file_rankings(
 
     {
         let mut score = 700;
-        let mut evidence = vec!["Fog-specific weather filename suggests a narrow validation target.".to_string()];
+        let mut evidence =
+            vec!["Fog-specific weather filename suggests a narrow validation target.".to_string()];
         let mut confidence = "low".to_string();
         if let Some(entry) = foggy_entry {
             evidence.push(format!(
@@ -6896,7 +6996,9 @@ fn build_timecycle_file_rankings(
 
     {
         let mut score = 680;
-        let mut evidence = vec!["Cloud-named weather file suggests sky tint or cloud color relevance.".to_string()];
+        let mut evidence = vec![
+            "Cloud-named weather file suggests sky tint or cloud color relevance.".to_string(),
+        ];
         let mut confidence = "low".to_string();
         if let Some(entry) = clouds_entry {
             evidence.push(format!(
@@ -6953,8 +7055,7 @@ fn build_timecycle_file_rankings(
             score += (weather_family_numeric.min(2000) / 60) as i32;
         } else {
             evidence.push(
-                "No weather-family XML files were available in analyzed text results."
-                    .to_string(),
+                "No weather-family XML files were available in analyzed text results.".to_string(),
             );
             score -= 420;
         }
@@ -7096,7 +7197,10 @@ fn build_timecycle_file_rankings(
         ));
     }
 
-    ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.path_or_family.cmp(&b.1.path_or_family)));
+    ranked.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.path_or_family.cmp(&b.1.path_or_family))
+    });
 
     ranked
         .into_iter()
@@ -7318,16 +7422,17 @@ fn build_visualsettings_key_report(
             let family_name = visualsettings_family_for_key(&change.key).to_string();
             let (risk, safe_for_first_patch, hypothesis) =
                 visualsettings_family_profile(&family_name);
-            let family = families
-                .entry(family_name.clone())
-                .or_insert_with(|| VisualsettingsKeyFamily {
-                    family: family_name.clone(),
-                    keys: Vec::new(),
-                    sample_changes: Vec::new(),
-                    risk: risk.to_string(),
-                    safe_for_first_patch,
-                    hypothesis: hypothesis.to_string(),
-                });
+            let family =
+                families
+                    .entry(family_name.clone())
+                    .or_insert_with(|| VisualsettingsKeyFamily {
+                        family: family_name.clone(),
+                        keys: Vec::new(),
+                        sample_changes: Vec::new(),
+                        risk: risk.to_string(),
+                        safe_for_first_patch,
+                        hypothesis: hypothesis.to_string(),
+                    });
             if !family.keys.contains(&change.key) {
                 family.keys.push(change.key.clone());
             }
@@ -7454,11 +7559,9 @@ fn weather_xml_entry_from_xml(entry: &XmlDiffEntry) -> WeatherXmlEntry {
         "Global weather configuration candidate; likely touches multiple systems and should stay deferred until effect mapping is clearer."
             .to_string()
     } else if name.contains("fog") {
-        "Fog-named weather file — candidate for fog or overcast color tuning."
-            .to_string()
+        "Fog-named weather file — candidate for fog or overcast color tuning.".to_string()
     } else if name.contains("cloud") {
-        "Cloud-named weather file — candidate for cloud or sky tint tuning."
-            .to_string()
+        "Cloud-named weather file — candidate for cloud or sky tint tuning.".to_string()
     } else {
         "Weather-family file with readable diffs; treat as a possible follow-up after safer color-only validation."
             .to_string()
@@ -7645,12 +7748,18 @@ fn timecycle_safe_first_patch_candidates<'a>(
 fn timecycle_scope_note_for_file(file: &str) -> &'static str {
     match file {
         "visualsettings.dat" => "Prefer one named key or one small key family at a time.",
-        "cloudkeyframes.xml" => "Stay with color-like desaturation or darkening only for the first pass.",
-        "timecycle_mods_1.xml" => "Restrict the first patch to clearly color-like values until schema mapping improves.",
+        "cloudkeyframes.xml" => {
+            "Stay with color-like desaturation or darkening only for the first pass."
+        }
+        "timecycle_mods_1.xml" => {
+            "Restrict the first patch to clearly color-like values until schema mapping improves."
+        }
         "w_foggy.xml" | "w_clouds.xml" => {
             "Prefer color-only weather tint changes; defer density-style numeric edits."
         }
-        "w_*.xml family" => "Use the family only for repeated-pattern planning, not for broad direct edits.",
+        "w_*.xml family" => {
+            "Use the family only for repeated-pattern planning, not for broad direct edits."
+        }
         _ => "Keep the patch narrow and validation-heavy.",
     }
 }
@@ -7919,7 +8028,8 @@ fn render_ai_timecycle_context_compact(
         })
         .collect::<Vec<_>>();
     let safe_scope_text = if safe_scope.is_empty() {
-        "- No file was confirmed as a safe first-patch candidate; stay in review-only mode.".to_string()
+        "- No file was confirmed as a safe first-patch candidate; stay in review-only mode."
+            .to_string()
     } else {
         format!(
             "These are the best candidates for planning a first patch because they combine sky/timecycle relevance with relatively readable evidence. Even here, the first patch should remain color-focused or single-key-focused.\n{}",
@@ -8097,10 +8207,7 @@ fn build_and_write_timecycle_intelligence(
         entries: safe_matrix,
     };
 
-    fs::write(
-        tc_dir.join("timecycle_strategy_report.md"),
-        strategy_report,
-    )?;
+    fs::write(tc_dir.join("timecycle_strategy_report.md"), strategy_report)?;
     fs::write(
         tc_dir.join("timecycle_file_rankings.json"),
         serde_json::to_string_pretty(&rankings_report)?,
@@ -8156,7 +8263,11 @@ mod tests {
         }
     }
 
-    fn make_timecycle_xml_entry(path: &str, numeric_changes: usize, color_like_changes: usize) -> XmlDiffEntry {
+    fn make_timecycle_xml_entry(
+        path: &str,
+        numeric_changes: usize,
+        color_like_changes: usize,
+    ) -> XmlDiffEntry {
         XmlDiffEntry {
             path: path.to_string(),
             status: "modified".to_string(),
@@ -9448,7 +9559,10 @@ mod tests {
             )],
         );
         let rankings = build_timecycle_file_rankings(Some(&results));
-        assert_eq!(rankings.first().unwrap().path_or_family, "visualsettings.dat");
+        assert_eq!(
+            rankings.first().unwrap().path_or_family,
+            "visualsettings.dat"
+        );
         assert_eq!(rankings.first().unwrap().rank, 1);
     }
 
@@ -10475,11 +10589,160 @@ fn main() -> Result<()> {
             println!("out: {}", out_path.display());
             println!("SCANNER_OK {}", out_path.display());
         }
+        "validate-xml" => {
+            let file = args.file.clone().context("validate-xml requires --file")?;
+            let vmode = match args.vmode.as_deref() {
+                Some("parse_only") => Some(validators::xml_validator::XmlValidationMode::ParseOnly),
+                Some("color_like_only") => {
+                    Some(validators::xml_validator::XmlValidationMode::ColorLikeOnly)
+                }
+                Some("structure_preserved") => {
+                    Some(validators::xml_validator::XmlValidationMode::StructurePreserved)
+                }
+                Some("no_numeric_changes") => {
+                    Some(validators::xml_validator::XmlValidationMode::NoNumericChanges)
+                }
+                Some("diff_against_baseline") => {
+                    Some(validators::xml_validator::XmlValidationMode::DiffAgainstBaseline)
+                }
+                Some(other) => anyhow::bail!("invalid vmode for xml: {}", other),
+                None => None,
+            };
+            let result =
+                validators::xml_validator::validate_xml(&file, vmode, args.baseline.as_deref());
+            write_validation_result(args.out.as_ref(), &result)?;
+            if !result.ok {
+                std::process::exit(1);
+            }
+        }
+        "validate-dat" => {
+            let file = args.file.clone().context("validate-dat requires --file")?;
+            let vmode = match args.vmode.as_deref() {
+                Some("parse_only") => Some(validators::dat_validator::DatValidationMode::ParseOnly),
+                Some("named_key_only") => {
+                    Some(validators::dat_validator::DatValidationMode::NamedKeyOnly)
+                }
+                Some("allowed_family_only") => {
+                    Some(validators::dat_validator::DatValidationMode::AllowedFamilyOnly)
+                }
+                Some("diff_against_baseline") => {
+                    Some(validators::dat_validator::DatValidationMode::DiffAgainstBaseline)
+                }
+                Some(other) => anyhow::bail!("invalid vmode for dat: {}", other),
+                None => None,
+            };
+            let result =
+                validators::dat_validator::validate_dat(&file, vmode, args.baseline.as_deref());
+            write_validation_result(args.out.as_ref(), &result)?;
+            if !result.ok {
+                std::process::exit(1);
+            }
+        }
+        "validate-scope" => {
+            let plan = args
+                .patch_plan
+                .clone()
+                .context("validate-scope requires --patch-plan")?;
+            let result = validators::scope_validator::validate_scope(&plan, &args.changed_files);
+            write_validation_result(args.out.as_ref(), &result)?;
+            if !result.ok {
+                std::process::exit(1);
+            }
+        }
+        "editor-dry-run" => {
+            let plan = args
+                .patch_plan
+                .clone()
+                .context("editor-dry-run requires --patch-plan")?;
+            let result = editors::dry_run::execute_dry_run(&plan, args.operation_id.as_deref())?;
+            write_validation_result(args.out.as_ref(), &result)?;
+            if !result.ok {
+                std::process::exit(1);
+            }
+        }
+        "dry-run" => {
+            let plan = args.patch_plan.clone().context("dry-run requires --plan")?;
+            let report = editors::dry_run::build_dry_run_report(&plan, args.workspace.as_deref())?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.safe_to_apply {
+                std::process::exit(1);
+            }
+        }
+        "inventory" => {
+            let ws = args
+                .workspace
+                .clone()
+                .context("inventory requires --workspace")?;
+            let report = inventory::scanner::scan_workspace(&ws)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "stage" => {
+            let plan = args.patch_plan.clone().context("stage requires --plan")?;
+            let ws = args
+                .workspace
+                .clone()
+                .context("stage requires --workspace")?;
+            let stage_dir = args
+                .stage_dir
+                .clone()
+                .context("stage requires --stage-dir")?;
+            let report = staging::stager::stage_patch_plan(&plan, &ws, &stage_dir)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.safe_to_stage {
+                std::process::exit(1);
+            }
+        }
+        "apply-stage" => {
+            let plan = args
+                .patch_plan
+                .clone()
+                .context("apply-stage requires --plan")?;
+            let stage_dir = args
+                .stage_dir
+                .clone()
+                .context("apply-stage requires --stage-dir")?;
+            let report = apply::text_apply::apply_patch_plan_to_stage(&plan, &stage_dir)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.safe_applied {
+                std::process::exit(1);
+            }
+        }
+        "diff-stage" => {
+            let ws = args
+                .workspace
+                .clone()
+                .context("diff-stage requires --workspace")?;
+            let stage_dir = args
+                .stage_dir
+                .clone()
+                .context("diff-stage requires --stage-dir")?;
+            let report = diff::preview::build_stage_diff_report(&ws, &stage_dir)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.diffed_clean {
+                std::process::exit(1);
+            }
+        }
         _ => {
             usage();
             anyhow::bail!("unknown command: {}", args.command);
         }
     }
 
+    Ok(())
+}
+
+fn write_validation_result<T: Serialize>(out: Option<&PathBuf>, result: &T) -> Result<()> {
+    let json = serde_json::to_string_pretty(result)?;
+    if let Some(path) = out {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+        fs::write(path, json)?;
+        println!("Validation result written to: {}", path.display());
+    } else {
+        println!("{}", json);
+    }
     Ok(())
 }

@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "operations": [
+    {
+      "id": "tr_001",
+      "phase": "first_patch",
+      "path": "common/data/visualsettings.dat",
+      "tool": "text_file_editor",
+      "type": "text_replace",
+      "valueTarget": { "search": "Gamma 2.200000", "replace": "Gamma 2.400000" },
+      "intent": "Hypothesis: increasing gamma improves overall scene brightness.",
+      "validationRequired": ["dat_validator", "scanner_scope_validator"]
+    }
+  ],
+  "targetFiles": ["visualsettings.dat"]
+}

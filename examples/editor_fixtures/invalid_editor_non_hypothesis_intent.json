@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "operations": [
+    {
+      "id": "op_bad_intent",
+      "phase": "first_patch",
+      "path": "common/data/visualsettings.dat",
+      "tool": "dat_named_key_editor",
+      "type": "dat_named_key_candidate",
+      "intent": "Just do it.",
+      "validationRequired": ["dat_validator"]
+    }
+  ]
+}
