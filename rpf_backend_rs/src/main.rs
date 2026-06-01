@@ -17,6 +17,7 @@ mod editors;
 mod export;
 mod inventory;
 mod rpf_backup;
+mod rpf_compare;
 mod rpf_probe;
 mod rpf_writer;
 mod staging;
@@ -332,6 +333,8 @@ struct Args {
     bundle_dir: Option<PathBuf>,
     target_rpf: Option<PathBuf>,
     backup_dir: Option<PathBuf>,
+    clean_rpf: Option<PathBuf>,
+    modded_rpf: Option<PathBuf>,
     changed_files: Vec<String>,
     operation_id: Option<String>,
 }
@@ -399,6 +402,11 @@ Commands:
                 Read-only probe of a target .rpf: file metadata, SHA-256, and
                 informational external-tool detection. Never parses RPF internals
                 or modifies the archive. canParseRpf/canWriteRpf are always false.
+  compare-rpf   --clean-rpf <path> --modded-rpf <path> [--out <out.json>]
+                Compare two .rpf archives by external metadata and SHA-256 only.
+                Read-only: neither archive is parsed or modified. archivesDiffer
+                is true when size or hash differs. canCompareInternals and
+                nativeParserImplemented are always false.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -495,6 +503,8 @@ fn parse_args() -> Result<Args> {
         bundle_dir: None,
         target_rpf: None,
         backup_dir: None,
+        clean_rpf: None,
+        modded_rpf: None,
         changed_files: Vec::new(),
         operation_id: None,
     };
@@ -616,6 +626,16 @@ fn parse_args() -> Result<Args> {
             "--backup-dir" => {
                 args.backup_dir = Some(PathBuf::from(
                     it.next().context("missing value for --backup-dir")?,
+                ))
+            }
+            "--clean-rpf" => {
+                args.clean_rpf = Some(PathBuf::from(
+                    it.next().context("missing value for --clean-rpf")?,
+                ))
+            }
+            "--modded-rpf" => {
+                args.modded_rpf = Some(PathBuf::from(
+                    it.next().context("missing value for --modded-rpf")?,
                 ))
             }
             "--analyze-text" => args.analyze_text = true,
@@ -10852,6 +10872,24 @@ fn main() -> Result<()> {
                 rpf_probe::probe::probe_rpf_archive(&target_rpf).map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;
             if report.status != rpf_probe::model::RpfProbeStatus::Probed {
+                std::process::exit(1);
+            }
+        }
+        "compare-rpf" => {
+            let clean_rpf = args
+                .clean_rpf
+                .clone()
+                .context("compare-rpf requires --clean-rpf")?;
+            let modded_rpf = args
+                .modded_rpf
+                .clone()
+                .context("compare-rpf requires --modded-rpf")?;
+            // Read-only comparison: reads metadata + SHA-256 for both archives.
+            // It never parses RPF internals and never modifies either archive.
+            let report = rpf_compare::compare::compare_rpf_archives(&clean_rpf, &modded_rpf)
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if report.status != rpf_compare::model::RpfCompareStatus::Compared {
                 std::process::exit(1);
             }
         }

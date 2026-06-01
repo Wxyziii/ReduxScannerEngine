@@ -1,0 +1,5 @@
+FAKE_RPF_FIXTURE (MODDED)
+This is NOT a real GTA V RPF archive.
+It is a tiny placeholder used only for compare/hash preflight tests.
+Its contents differ from fake_update.rpf so the SHA-256 hash differs.
+No copyrighted game data is present.

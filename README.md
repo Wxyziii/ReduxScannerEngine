@@ -65,6 +65,14 @@ internals or modify the archive, and `canParseRpf` / `canWriteRpf` /
 `nativeWriterImplemented` are all false.
 See [T0_5_2_RPF_PROBE.md](docs/T0_5_2_RPF_PROBE.md) for details.
 
+### Phase T0.5.3 — Clean vs Modded RPF Hash/Metadata Compare
+`compare-rpf` compares two `.rpf` archives (clean vs modded) by external file
+metadata and SHA-256 only. It is **read-only** — neither archive is parsed or
+modified. `archivesDiffer` is true when size or hash differs, and
+`canCompareInternals` / `nativeParserImplemented` are always false. Useful for
+proving whether two archives differ before any future deeper inspection.
+See [T0_5_3_RPF_COMPARE.md](docs/T0_5_3_RPF_COMPARE.md) for details.
+
 ## What this project must not do
 
 This scanner should not:
