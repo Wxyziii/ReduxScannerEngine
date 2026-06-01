@@ -295,7 +295,9 @@ pub fn build_rpf_write_plan(
         "hash_verification_required",
         true,
         GateSeverity::Blocking,
-        "Written entries must be SHA-256 verified against the bundle before commit.",
+        "Written entries must be SHA-256 verified against the bundle before commit. \
+         Use `probe-rpf --target-rpf <path>` to capture target metadata/hash as a \
+         read-only preflight; the native RPF writer is still not implemented.",
     ));
     gates.push(gate(
         "manual_confirmation_required",

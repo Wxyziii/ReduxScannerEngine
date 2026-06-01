@@ -17,6 +17,7 @@ mod editors;
 mod export;
 mod inventory;
 mod rpf_backup;
+mod rpf_probe;
 mod rpf_writer;
 mod staging;
 mod validators;
@@ -394,6 +395,10 @@ Commands:
                 Copy a target .rpf into a backup directory and verify it by SHA-256.
                 Read/copy only: the original target archive is never modified.
                 safeForFutureWrite is true only when the backup hash matches.
+  probe-rpf     --target-rpf <path> [--out <out.json>]
+                Read-only probe of a target .rpf: file metadata, SHA-256, and
+                informational external-tool detection. Never parses RPF internals
+                or modifies the archive. canParseRpf/canWriteRpf are always false.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -432,6 +437,10 @@ Notes:
     directory and verifies the copy by SHA-256. The original target archive is never
     modified or written. A successful, hash-verified backup is a prerequisite for any
     future controlled RPF writing. No real RPF writing is performed here.
+  - probe-rpf is a READ-ONLY preflight. It reads a target .rpf file's metadata and
+    SHA-256 hash and reports informational external-tool detection. It does not parse
+    RPF internals and never modifies the archive. canParseRpf, canWriteRpf, and
+    nativeWriterImplemented are all false in this milestone.
 "#
     );
 }
@@ -10829,6 +10838,20 @@ fn main() -> Result<()> {
                 .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;
             if !report.safe_for_future_write {
+                std::process::exit(1);
+            }
+        }
+        "probe-rpf" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("probe-rpf requires --target-rpf")?;
+            // Read-only probe: reads metadata + SHA-256 and detects external tools.
+            // It never parses RPF internals and never modifies the archive.
+            let report =
+                rpf_probe::probe::probe_rpf_archive(&target_rpf).map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if report.status != rpf_probe::model::RpfProbeStatus::Probed {
                 std::process::exit(1);
             }
         }

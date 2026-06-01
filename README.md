@@ -58,6 +58,13 @@ modified, and real RPF writing is still not implemented. A hash-verified backup 
 a prerequisite for any future controlled write.
 See [T0_5_1_RPF_BACKUP_PREFLIGHT.md](docs/T0_5_1_RPF_BACKUP_PREFLIGHT.md) for details.
 
+### Phase T0.5.2 — RPF Archive Probe + Tool Capability Detection
+`probe-rpf` reads a target `.rpf` file's metadata and SHA-256 hash and reports
+informational external-tool detection. It is **read-only** — it does not parse RPF
+internals or modify the archive, and `canParseRpf` / `canWriteRpf` /
+`nativeWriterImplemented` are all false.
+See [T0_5_2_RPF_PROBE.md](docs/T0_5_2_RPF_PROBE.md) for details.
+
 ## What this project must not do
 
 This scanner should not:
