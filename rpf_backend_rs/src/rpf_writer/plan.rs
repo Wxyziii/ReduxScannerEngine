@@ -306,6 +306,20 @@ pub fn build_rpf_write_plan(
         "Explicit human confirmation is required before any real archive write.",
     ));
 
+    // ── Gate: rpf_adapter_supports_write ────────────────────────────────────
+    // The active adapter is the safe-mode NullRpfAdapter, which cannot write.
+    let adapter = crate::rpf_adapter::null_adapter::NullRpfAdapter::new();
+    let adapter_can_write =
+        crate::rpf_adapter::contract::RpfAdapter::capabilities(&adapter).can_write_archive;
+    gates.push(gate(
+        "rpf_adapter_supports_write",
+        adapter_can_write,
+        GateSeverity::Blocking,
+        "The active RPF adapter (NullRpfAdapter) is safe-mode only and cannot write \
+         archives. See `rpf-adapter-info`; a future adapter must report \
+         canWriteArchive=true and pass these gates before any real write.",
+    ));
+
     // ── Terminal gate: real writer not implemented ──────────────────────────
     gates.push(real_writer_not_implemented_gate());
     blocked.push(RpfWriteBlockedItem {

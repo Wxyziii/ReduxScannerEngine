@@ -16,6 +16,7 @@ mod diff;
 mod editors;
 mod export;
 mod inventory;
+mod rpf_adapter;
 mod rpf_backup;
 mod rpf_compare;
 mod rpf_probe;
@@ -407,6 +408,11 @@ Commands:
                 Read-only: neither archive is parsed or modified. archivesDiffer
                 is true when size or hash differs. canCompareInternals and
                 nativeParserImplemented are always false.
+  rpf-adapter-info [--out <out.json>]
+                Report the current RPF adapter contract and capabilities.
+                The active adapter is NullRpfAdapter (safe-mode only): it never
+                opens, parses, or modifies an archive. canWriteArchive,
+                canReplaceFiles, nativeParser, and nativeWriter are always false.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -10892,6 +10898,13 @@ fn main() -> Result<()> {
             if report.status != rpf_compare::model::RpfCompareStatus::Compared {
                 std::process::exit(1);
             }
+        }
+        "rpf-adapter-info" => {
+            // Inspection only: reports the current adapter contract/capabilities.
+            // The NullRpfAdapter never opens, parses, or modifies any archive.
+            let adapter = rpf_adapter::null_adapter::NullRpfAdapter::new();
+            let report = rpf_adapter::contract::build_adapter_info_report(&adapter);
+            write_validation_result(args.out.as_ref(), &report)?;
         }
         _ => {
             usage();

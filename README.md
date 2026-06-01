@@ -73,6 +73,16 @@ modified. `archivesDiffer` is true when size or hash differs, and
 proving whether two archives differ before any future deeper inspection.
 See [T0_5_3_RPF_COMPARE.md](docs/T0_5_3_RPF_COMPARE.md) for details.
 
+### Phase T0.5.4 — RPF Adapter Contract
+`rpf-adapter-info` reports the RPF adapter contract and capabilities. The active
+adapter is `NullRpfAdapter` — **safe-mode only**: it never opens, parses, or
+modifies an archive, and `canWriteArchive` / `canReplaceFiles` / `nativeParser` /
+`nativeWriter` are all false. All list/extract/replace/write operations are
+blocked as `native_rpf_adapter_not_implemented`. This milestone only defines the
+trait, capability model, and safety behavior for future native or external-tool
+adapters; no real parsing or writing is implemented.
+See [T0_5_4_RPF_ADAPTER_CONTRACT.md](docs/T0_5_4_RPF_ADAPTER_CONTRACT.md) for details.
+
 ## What this project must not do
 
 This scanner should not:
