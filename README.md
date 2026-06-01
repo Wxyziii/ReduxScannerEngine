@@ -38,6 +38,11 @@ See [T0_3_STATIC_VALIDATORS.md](docs/T0_3_STATIC_VALIDATORS.md) for details.
 Safety framework for future file editors.
 See [T0_4_1_EDITOR_DRY_RUN_FRAMEWORK.md](docs/T0_4_1_EDITOR_DRY_RUN_FRAMEWORK.md) for details.
 
+### Phase T0.4.6 — Patch Bundle Export
+Packages patched staged files plus their reports into a portable bundle folder.
+It never modifies the source workspace, the staged files, or any RPF archive.
+See [T0_4_6_PATCH_BUNDLE_EXPORT.md](docs/T0_4_6_PATCH_BUNDLE_EXPORT.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

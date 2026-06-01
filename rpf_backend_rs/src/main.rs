@@ -14,6 +14,7 @@ use time::OffsetDateTime;
 mod apply;
 mod diff;
 mod editors;
+mod export;
 mod inventory;
 mod staging;
 mod validators;
@@ -325,6 +326,7 @@ struct Args {
     patch_plan: Option<PathBuf>,
     workspace: Option<PathBuf>,
     stage_dir: Option<PathBuf>,
+    bundle_dir: Option<PathBuf>,
     changed_files: Vec<String>,
     operation_id: Option<String>,
 }
@@ -373,6 +375,13 @@ Commands:
                 Compare workspace files against their staged (patched) counterparts.
                 Read-only — neither workspace nor stage directory is modified.
                 Shows per-file change status, line counts, and preview hunks.
+  export-bundle --plan <path> --workspace <path> --stage-dir <path>
+                --bundle-dir <path> [--out <out.json>]
+                Package patched staged files and reports into a portable patch bundle.
+                Copies staged files into <bundle-dir>/files/ and writes bundle_manifest.json,
+                patch_plan.json, diff_report.json (and stage/apply reports if available).
+                Does not modify the source workspace, staged files, or any RPF archive.
+                Exits 1 if the export is blocked.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -397,6 +406,11 @@ Notes:
   - diff-stage compares workspace files against staged (patched) counterparts. It is
     read-only and does not modify any file. Use it to preview what a patch changed
     before any export or future RPF writing step.
+  - export-bundle creates a portable patch bundle folder from the staged files. It copies
+    the patched staged files into <bundle-dir>/files/ and bundles the patch plan and report
+    files (bundle_manifest.json, patch_plan.json, diff_report.json, plus stage/apply reports
+    when present). It never modifies the source workspace, the staged files, or any RPF
+    archive — it only writes into the bundle directory.
 "#
     );
 }
@@ -448,6 +462,7 @@ fn parse_args() -> Result<Args> {
         patch_plan: None,
         workspace: None,
         stage_dir: None,
+        bundle_dir: None,
         changed_files: Vec::new(),
         operation_id: None,
     };
@@ -554,6 +569,11 @@ fn parse_args() -> Result<Args> {
             "--stage-dir" => {
                 args.stage_dir = Some(PathBuf::from(
                     it.next().context("missing value for --stage-dir")?,
+                ))
+            }
+            "--bundle-dir" => {
+                args.bundle_dir = Some(PathBuf::from(
+                    it.next().context("missing value for --bundle-dir")?,
                 ))
             }
             "--analyze-text" => args.analyze_text = true,
@@ -10719,6 +10739,30 @@ fn main() -> Result<()> {
             let report = diff::preview::build_stage_diff_report(&ws, &stage_dir)?;
             write_validation_result(args.out.as_ref(), &report)?;
             if !report.diffed_clean {
+                std::process::exit(1);
+            }
+        }
+        "export-bundle" => {
+            let plan = args
+                .patch_plan
+                .clone()
+                .context("export-bundle requires --plan")?;
+            let ws = args
+                .workspace
+                .clone()
+                .context("export-bundle requires --workspace")?;
+            let stage_dir = args
+                .stage_dir
+                .clone()
+                .context("export-bundle requires --stage-dir")?;
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("export-bundle requires --bundle-dir")?;
+            let report = export::bundle::export_patch_bundle(&plan, &ws, &stage_dir, &bundle_dir)
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.safe_exported {
                 std::process::exit(1);
             }
         }
