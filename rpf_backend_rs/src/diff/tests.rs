@@ -216,6 +216,86 @@ mod tests {
         assert!(report.summary.total_files >= 1);
     }
 
+    // ── T0.4.6.1: stage metadata ignore policy ─────────────────────────────────
+
+    #[test]
+    fn diff_stage_ignores_apply_report_in_stage_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        stage_and_apply(REPLACE_PLAN, &dir);
+        // Drop an apply report into the stage dir (as the CLI --out flow does).
+        std::fs::write(
+            dir.path().join("apply_report.json"),
+            b"{\"safeApplied\":true}\n",
+        )
+        .unwrap();
+
+        let report = build_stage_diff_report(Path::new(FULL_WS), dir.path()).unwrap();
+        assert!(
+            report.diffed_clean,
+            "apply_report.json should be ignored; blocked={:?}",
+            report.blocked
+        );
+        assert!(
+            !report
+                .files
+                .iter()
+                .any(|f| f.relative_path == "apply_report.json"),
+            "apply_report.json must not appear as a diffed asset"
+        );
+        assert!(
+            !report.blocked.iter().any(|b| b.path == "apply_report.json"),
+            "apply_report.json must not appear as missing original"
+        );
+    }
+
+    #[test]
+    fn diff_stage_ignores_diff_report_in_stage_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        stage_and_apply(REPLACE_PLAN, &dir);
+        std::fs::write(
+            dir.path().join("diff_report.json"),
+            b"{\"diffedClean\":true}\n",
+        )
+        .unwrap();
+
+        let report = build_stage_diff_report(Path::new(FULL_WS), dir.path()).unwrap();
+        assert!(
+            report.diffed_clean,
+            "diff_report.json should be ignored; blocked={:?}",
+            report.blocked
+        );
+        assert!(
+            !report.blocked.iter().any(|b| b.path == "diff_report.json"),
+            "diff_report.json must not appear as missing original"
+        );
+        // The real changed asset is still reported.
+        assert!(report
+            .files
+            .iter()
+            .any(|f| f.relative_path == "common/data/visualsettings.dat" && f.changed));
+    }
+
+    #[test]
+    fn diff_stage_ignores_stage_manifest_in_stage_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // stage writes stage_manifest.json itself.
+        stage_only(REPLACE_PLAN, &dir);
+        assert!(dir.path().join("stage_manifest.json").is_file());
+
+        let report = build_stage_diff_report(Path::new(FULL_WS), dir.path()).unwrap();
+        assert!(
+            !report
+                .files
+                .iter()
+                .any(|f| f.relative_path == "stage_manifest.json"),
+            "stage_manifest.json must not appear as a patched asset"
+        );
+        assert!(!report
+            .blocked
+            .iter()
+            .any(|b| b.path == "stage_manifest.json"));
+    }
+
     #[test]
     fn diff_stage_preview_contains_context_add_remove_lines() {
         let dir = tempfile::TempDir::new().unwrap();

@@ -30,7 +30,9 @@ fn is_binary_ext(path: &str) -> bool {
 }
 
 /// Recursively collect files under `current_dir`, stripping `base_dir` for
-/// relative paths. Skips `stage_manifest.json` (internal staging metadata).
+/// relative paths. Skips stage metadata/report files (see
+/// [`crate::staging::metadata::is_stage_metadata_file`]) so generated reports are
+/// never diffed as patched assets.
 fn collect_stage_files(base_dir: &Path, current_dir: &Path, out: &mut Vec<(PathBuf, String)>) {
     let Ok(entries) = fs::read_dir(current_dir) else {
         return;
@@ -40,20 +42,16 @@ fn collect_stage_files(base_dir: &Path, current_dir: &Path, out: &mut Vec<(PathB
         if path.is_dir() {
             collect_stage_files(base_dir, &path, out);
         } else if path.is_file() {
-            let name = path
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            // Skip internal staging metadata.
-            if name == "stage_manifest.json" {
-                continue;
-            }
             if let Ok(rel) = path.strip_prefix(base_dir) {
                 let normalized = rel
                     .to_string_lossy()
                     .replace('\\', "/")
                     .trim_start_matches('/')
                     .to_string();
+                // Skip internal staging/report metadata.
+                if crate::staging::metadata::is_stage_metadata_file(&normalized) {
+                    continue;
+                }
                 out.push((path, normalized));
             }
         }

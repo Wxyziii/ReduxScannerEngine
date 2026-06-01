@@ -136,6 +136,48 @@ mod tests {
     }
 
     #[test]
+    fn export_bundle_does_not_copy_stage_metadata_into_files_dir() {
+        let stage = staged_and_applied();
+        // Place report/metadata files into the stage dir, as the CLI flow does.
+        std::fs::write(stage.path().join("apply_report.json"), b"{}\n").unwrap();
+        std::fs::write(stage.path().join("diff_report.json"), b"{}\n").unwrap();
+        // stage_manifest.json already exists from staging.
+
+        let bundle = tempfile::TempDir::new().unwrap();
+        let report = export_patch_bundle(
+            Path::new(REPLACE_PLAN),
+            Path::new(FULL_WS),
+            stage.path(),
+            bundle.path(),
+        )
+        .unwrap();
+        assert!(report.safe_exported, "blocked: {:?}", report.blocked);
+
+        // Metadata files must NOT be copied under files/.
+        let files_root = bundle.path().join("files");
+        for meta in [
+            "apply_report.json",
+            "diff_report.json",
+            "stage_manifest.json",
+        ] {
+            assert!(
+                !files_root.join(meta).exists(),
+                "{} must not be copied into files/",
+                meta
+            );
+        }
+        assert!(!report
+            .files
+            .iter()
+            .any(|f| f.relative_path.ends_with("apply_report.json")
+                || f.relative_path.ends_with("diff_report.json")
+                || f.relative_path.ends_with("stage_manifest.json")));
+
+        // The real patched asset is still exported.
+        assert!(files_root.join(TARGET_REL).is_file());
+    }
+
+    #[test]
     fn export_bundle_blocks_missing_stage_dir() {
         let bundle = tempfile::TempDir::new().unwrap();
         let missing = bundle.path().join("does_not_exist_stage");

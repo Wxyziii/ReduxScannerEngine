@@ -14,22 +14,12 @@ const BUNDLE_VERSION: &str = "1";
 /// Files larger than this are recorded without a SHA-256 hash.
 const HASH_MAX_BYTES: u64 = 1024 * 1024;
 
-/// Internal metadata / report files that may live in a stage dir but must never
-/// be copied into `files/` as if they were patched game assets. They are bundled
-/// separately by name (or regenerated) at the bundle root.
-const STAGE_METADATA_NAMES: &[&str] = &[
-    "stage_manifest.json",
-    "apply_report.json",
-    "diff_report.json",
-    "bundle_manifest.json",
-    "export_report.json",
-];
-
 // ── Private helpers ───────────────────────────────────────────────────────────
 
 /// Recursively collect files under `current_dir`, normalizing relative paths
-/// against `base_dir`. Skips internal staging/report metadata (see
-/// [`STAGE_METADATA_NAMES`]) so report JSONs are never copied as game assets.
+/// against `base_dir`. Skips stage metadata/report files (see
+/// [`crate::staging::metadata::is_stage_metadata_file`]) so report JSONs are
+/// never copied into `files/` as if they were patched game assets.
 fn collect_stage_files(base_dir: &Path, current_dir: &Path, out: &mut Vec<(PathBuf, String)>) {
     let Ok(entries) = fs::read_dir(current_dir) else {
         return;
@@ -39,19 +29,15 @@ fn collect_stage_files(base_dir: &Path, current_dir: &Path, out: &mut Vec<(PathB
         if path.is_dir() {
             collect_stage_files(base_dir, &path, out);
         } else if path.is_file() {
-            let name = path
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            if STAGE_METADATA_NAMES.contains(&name.as_str()) {
-                continue;
-            }
             if let Ok(rel) = path.strip_prefix(base_dir) {
                 let normalized = rel
                     .to_string_lossy()
                     .replace('\\', "/")
                     .trim_start_matches('/')
                     .to_string();
+                if crate::staging::metadata::is_stage_metadata_file(&normalized) {
+                    continue;
+                }
                 out.push((path, normalized));
             }
         }
