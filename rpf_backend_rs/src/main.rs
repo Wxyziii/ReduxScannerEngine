@@ -19,6 +19,7 @@ mod inventory;
 mod rpf_adapter;
 mod rpf_backup;
 mod rpf_compare;
+mod rpf_external;
 mod rpf_probe;
 mod rpf_writer;
 mod staging;
@@ -413,6 +414,11 @@ Commands:
                 The active adapter is NullRpfAdapter (safe-mode only): it never
                 opens, parses, or modifies an archive. canWriteArchive,
                 canReplaceFiles, nativeParser, and nativeWriter are always false.
+  rpf-external-tools [--out <out.json>]
+                Plan future external RPF tooling support (OpenIV/CodeWalker/7z/
+                powershell/cmd). Detection is informational PATH lookup only —
+                no tool is ever executed. canWriteArchive,
+                canUseExternalToolsAutomatically are always false; safeModeOnly true.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -10905,6 +10911,13 @@ fn main() -> Result<()> {
             let adapter = rpf_adapter::null_adapter::NullRpfAdapter::new();
             let report = rpf_adapter::contract::build_adapter_info_report(&adapter);
             write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "rpf-external-tools" => {
+            // Planning only: detects known tools on PATH (informational) and
+            // marks every mutation/auto-execution path blocked. No tool is run.
+            let plan =
+                rpf_external::build_external_tool_adapter_plan().map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &plan)?;
         }
         _ => {
             usage();

@@ -68,5 +68,9 @@ pub fn build_adapter_info_report(adapter: &dyn RpfAdapter) -> RpfAdapterInfoRepo
         native_adapter_implemented: false,
         note,
         modifies_archive: false,
+        // Informational external-tool planning. This never changes the active
+        // adapter and never executes a tool.
+        external_tool_plan: crate::rpf_external::build_external_tool_adapter_plan()
+            .unwrap_or_else(|_| panic!("external tool planning must not fail")),
     }
 }

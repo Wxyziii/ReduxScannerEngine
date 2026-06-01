@@ -83,6 +83,16 @@ trait, capability model, and safety behavior for future native or external-tool
 adapters; no real parsing or writing is implemented.
 See [T0_5_4_RPF_ADAPTER_CONTRACT.md](docs/T0_5_4_RPF_ADAPTER_CONTRACT.md) for details.
 
+### Phase T0.5.5 — External Tool Adapter Planning
+`rpf-external-tools` plans future external RPF tooling support
+(OpenIV/CodeWalker/7z/powershell/cmd). Detection is **informational only** — a
+best-effort PATH lookup; no tool is ever executed, no external archive mutation
+occurs, and there is no automatic tool execution. `canWriteArchive` and
+`canUseExternalToolsAutomatically` are always false and `safeModeOnly` is true.
+`NullRpfAdapter` remains the active adapter; `rpf-adapter-info` embeds this plan
+under `externalToolPlan` for reference.
+See [T0_5_5_EXTERNAL_TOOL_ADAPTER_PLANNING.md](docs/T0_5_5_EXTERNAL_TOOL_ADAPTER_PLANNING.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

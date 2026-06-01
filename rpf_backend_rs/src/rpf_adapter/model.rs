@@ -147,4 +147,6 @@ pub struct RpfAdapterInfoReport {
     pub note: String,
     /// This command never modifies any archive.
     pub modifies_archive: bool,
+    /// Informational external-tool planning (detection only; never executed).
+    pub external_tool_plan: crate::rpf_external::model::ExternalToolAdapterPlan,
 }
