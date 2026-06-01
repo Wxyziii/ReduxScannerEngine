@@ -21,6 +21,7 @@ mod rpf_backup;
 mod rpf_compare;
 mod rpf_external;
 mod rpf_probe;
+mod rpf_readiness;
 mod rpf_writer;
 mod staging;
 mod validators;
@@ -337,6 +338,7 @@ struct Args {
     backup_dir: Option<PathBuf>,
     clean_rpf: Option<PathBuf>,
     modded_rpf: Option<PathBuf>,
+    backup_report: Option<PathBuf>,
     changed_files: Vec<String>,
     operation_id: Option<String>,
 }
@@ -419,6 +421,13 @@ Commands:
                 powershell/cmd). Detection is informational PATH lookup only —
                 no tool is ever executed. canWriteArchive,
                 canUseExternalToolsAutomatically are always false; safeModeOnly true.
+  write-readiness --bundle-dir <path> --target-rpf <path>
+                [--backup-report <path>] [--out <out.json>]
+                Unified read-only pre-write readiness report combining bundle,
+                write plan, backup, probe, adapter, and external-tool components.
+                readyToWrite is always false; never opens or modifies the target
+                archive, never modifies the bundle, never creates backups, and
+                never executes external tools.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -517,6 +526,7 @@ fn parse_args() -> Result<Args> {
         backup_dir: None,
         clean_rpf: None,
         modded_rpf: None,
+        backup_report: None,
         changed_files: Vec::new(),
         operation_id: None,
     };
@@ -648,6 +658,11 @@ fn parse_args() -> Result<Args> {
             "--modded-rpf" => {
                 args.modded_rpf = Some(PathBuf::from(
                     it.next().context("missing value for --modded-rpf")?,
+                ))
+            }
+            "--backup-report" => {
+                args.backup_report = Some(PathBuf::from(
+                    it.next().context("missing value for --backup-report")?,
                 ))
             }
             "--analyze-text" => args.analyze_text = true,
@@ -10918,6 +10933,26 @@ fn main() -> Result<()> {
             let plan =
                 rpf_external::build_external_tool_adapter_plan().map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &plan)?;
+        }
+        "write-readiness" => {
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("write-readiness requires --bundle-dir")?;
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("write-readiness requires --target-rpf")?;
+            // Read-only: combines existing preflight reports into one decision
+            // object. Never opens/modifies the target, bundle, or backups, and
+            // never executes external tools. readyToWrite is always false.
+            let report = rpf_readiness::readiness::build_write_readiness_report(
+                &bundle_dir,
+                &target_rpf,
+                args.backup_report.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
         }
         _ => {
             usage();

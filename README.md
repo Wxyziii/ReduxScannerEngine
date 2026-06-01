@@ -93,6 +93,16 @@ occurs, and there is no automatic tool execution. `canWriteArchive` and
 under `externalToolPlan` for reference.
 See [T0_5_5_EXTERNAL_TOOL_ADAPTER_PLANNING.md](docs/T0_5_5_EXTERNAL_TOOL_ADAPTER_PLANNING.md) for details.
 
+### Phase T0.5.6 — Write Readiness Report
+`write-readiness` produces a unified, **read-only** pre-write decision report that
+combines the bundle, write plan, backup preflight, RPF probe, adapter
+capabilities, and external-tool planning into one object answering "is this bundle
+ready to write into this target RPF?". `readyToWrite` stays **false** until a real
+writer, native parser, and a trusted writing adapter exist. It never opens or
+modifies the target archive, never modifies the bundle, never creates backups, and
+never executes external tools.
+See [T0_5_6_WRITE_READINESS_REPORT.md](docs/T0_5_6_WRITE_READINESS_REPORT.md) for details.
+
 ## What this project must not do
 
 This scanner should not:
