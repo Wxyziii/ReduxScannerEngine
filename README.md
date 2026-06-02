@@ -112,6 +112,18 @@ RPF archive and does not execute external tools; `readyForWrite` stays false unt
 a controlled writer adapter exists.
 See [T0_5_7_RPF_ENTRY_MANIFEST_SCHEMA.md](docs/T0_5_7_RPF_ENTRY_MANIFEST_SCHEMA.md) for details.
 
+### Phase T0.5.8 — Writer Permission Token / Manual Confirmation Schema
+`writer-permission` models the **read-only** manual confirmation object required
+before any future controlled RPF write. It validates the bundle/target inputs,
+checks any provided readiness/entry-manifest/backup reports, and requires an exact
+confirmation phrase; when everything checks out it issues a planning permission
+token. The token never authorizes writing: `writerAllowed` is always false and the
+report still carries the writer/parser/adapter blockers. It never opens or modifies
+the target archive, never modifies the bundle, never creates backups, and never
+executes external tools. This will later become the final authorization gate before
+controlled writing.
+See [T0_5_8_WRITER_PERMISSION_TOKEN.md](docs/T0_5_8_WRITER_PERMISSION_TOKEN.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

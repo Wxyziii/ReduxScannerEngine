@@ -21,6 +21,7 @@ mod rpf_backup;
 mod rpf_compare;
 mod rpf_entry_manifest;
 mod rpf_external;
+mod rpf_permission;
 mod rpf_probe;
 mod rpf_readiness;
 mod rpf_writer;
@@ -340,6 +341,9 @@ struct Args {
     clean_rpf: Option<PathBuf>,
     modded_rpf: Option<PathBuf>,
     backup_report: Option<PathBuf>,
+    readiness_report: Option<PathBuf>,
+    entry_manifest_report: Option<PathBuf>,
+    confirm: Option<String>,
     changed_files: Vec<String>,
     operation_id: Option<String>,
 }
@@ -434,6 +438,16 @@ Commands:
                 to archive-relative paths (size + SHA-256, path safety, duplicate
                 detection). Read-only: never parses/opens/writes the target RPF and
                 never executes external tools. readyForWrite is always false.
+  writer-permission --bundle-dir <path> --target-rpf <path>
+                [--readiness-report <path>] [--entry-manifest-report <path>]
+                [--backup-report <path>] --confirm <phrase> [--out <out.json>]
+                Model the manual confirmation / permission token required before any
+                future controlled RPF write. Read-only: validates inputs and the
+                exact confirmation phrase, then may issue a planning token. The
+                token never authorizes writing — writerAllowed is always false and
+                blocking items still include writer/parser/adapter blockers. Never
+                opens or modifies the target archive, never modifies the bundle,
+                never creates backups, and never executes external tools.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -533,6 +547,9 @@ fn parse_args() -> Result<Args> {
         clean_rpf: None,
         modded_rpf: None,
         backup_report: None,
+        readiness_report: None,
+        entry_manifest_report: None,
+        confirm: None,
         changed_files: Vec::new(),
         operation_id: None,
     };
@@ -671,6 +688,18 @@ fn parse_args() -> Result<Args> {
                     it.next().context("missing value for --backup-report")?,
                 ))
             }
+            "--readiness-report" => {
+                args.readiness_report = Some(PathBuf::from(
+                    it.next().context("missing value for --readiness-report")?,
+                ))
+            }
+            "--entry-manifest-report" => {
+                args.entry_manifest_report = Some(PathBuf::from(
+                    it.next()
+                        .context("missing value for --entry-manifest-report")?,
+                ))
+            }
+            "--confirm" => args.confirm = Some(it.next().context("missing value for --confirm")?),
             "--analyze-text" => args.analyze_text = true,
             "--build-learning-corpus" => args.build_learning_corpus = true,
             "--all" => {
@@ -10976,6 +11005,31 @@ fn main() -> Result<()> {
             if report.status != rpf_entry_manifest::model::RpfEntryManifestStatus::Built {
                 std::process::exit(1);
             }
+        }
+        "writer-permission" => {
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("writer-permission requires --bundle-dir")?;
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("writer-permission requires --target-rpf")?;
+            // Read-only: models the manual confirmation/permission token required
+            // before any future RPF write. Never opens/modifies the target,
+            // bundle, or backups; never executes external tools; never creates
+            // backups. writerAllowed is always false (the writer is not
+            // implemented), so a token never authorizes writing.
+            let report = rpf_permission::permission::build_writer_permission_report(
+                &bundle_dir,
+                &target_rpf,
+                args.readiness_report.as_deref(),
+                args.entry_manifest_report.as_deref(),
+                args.backup_report.as_deref(),
+                args.confirm.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
         }
         _ => {
             usage();
