@@ -143,6 +143,17 @@ stays `NullRpfAdapter`; `canWriteArchive`, `replaceEndpointCalled`,
 `writeEndpointsCalled`, `modifiesArchive`, and `writerAllowed` are always false.
 See [T0_6_0_CODEWALKER_API_DETECTION.md](docs/T0_6_0_CODEWALKER_API_DETECTION.md) for details.
 
+### Phase T0.6.1 — CodeWalker.API Readiness Probe
+`codewalker-readiness` builds on `codewalker-detect` and adds a read-only service
+status readiness check (`GET /api/service-status`, tolerantly parsed for ready /
+GTA path / version info). **GET-only**: it never issues a POST and never calls
+replace/import/reload-services/set-config or any mutation endpoint, never executes
+CodeWalker, and never opens or modifies an RPF archive. `codewalkerApiReadyForSearch`
+is true only when status clearly reports readiness; `codewalkerApiReadyForReplace`,
+`canWriteArchive`, and `writerAllowed` stay false. The active adapter stays
+`NullRpfAdapter`.
+See [T0_6_1_CODEWALKER_API_READINESS.md](docs/T0_6_1_CODEWALKER_API_READINESS.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

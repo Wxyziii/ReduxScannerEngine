@@ -42,9 +42,11 @@ mod tests {
     }
 
     #[test]
-    fn codewalker_strategy_detection_not_implemented_yet() {
+    fn codewalker_strategy_detection_implemented_after_t0_6_0() {
         let r = build_codewalker_strategy_report().unwrap();
-        assert!(!r.codewalker_detection_implemented);
+        // T0.6.0 shipped codewalker-detect; T0.6.1 shipped codewalker-readiness.
+        assert!(r.codewalker_detection_implemented);
+        assert!(r.codewalker_readiness_implemented);
     }
 
     #[test]
@@ -95,7 +97,14 @@ mod tests {
         for expected in ["T0.6.0", "T0.6.1", "T0.6.2", "T0.6.3", "T0.6.4", "T0.6.5"] {
             assert!(ids.contains(&expected), "missing milestone {}", expected);
         }
-        assert!(r.milestone_plan.iter().all(|m| !m.implemented));
+        // T0.6.0 + T0.6.1 shipped; T0.6.2+ still future.
+        for m in r.milestone_plan.iter() {
+            if m.id == "T0.6.0" || m.id == "T0.6.1" {
+                assert!(m.implemented, "{} should be implemented", m.id);
+            } else {
+                assert!(!m.implemented, "{} should not be implemented", m.id);
+            }
+        }
     }
 
     #[test]
@@ -111,7 +120,8 @@ mod tests {
         assert_eq!(v["activeAdapterName"], "null_rpf_adapter");
         assert_eq!(v["writerAllowedNow"], false);
         assert_eq!(v["codewalkerWriteAllowedNow"], false);
-        assert_eq!(v["codewalkerDetectionImplemented"], false);
+        assert_eq!(v["codewalkerDetectionImplemented"], true);
+        assert_eq!(v["codewalkerReadinessImplemented"], true);
         assert_eq!(v["codewalkerExecutionImplemented"], false);
         assert_eq!(v["externalToolExecutionAllowed"], false);
         assert_eq!(v["plannedBaseUrlDefault"], "http://localhost:5555");

@@ -17,9 +17,9 @@ pub const SERVICE_STATUS_PATH: &str = "/api/service-status";
 const PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// Minimal HTTP GET response (status line + body) captured by the detector.
-struct HttpResponse {
-    status: u16,
-    body: String,
+pub(crate) struct HttpResponse {
+    pub(crate) status: u16,
+    pub(crate) body: String,
 }
 
 /// Strip trailing slashes from a base URL (keep the scheme's `//`).
@@ -57,7 +57,7 @@ fn parse_status_line(text: &str) -> Option<u16> {
 
 /// Perform a single safe HTTP GET. Only `http://` is dialed (no TLS in std);
 /// `https://` URLs are reported unreachable rather than handled insecurely.
-fn http_get(url: &str) -> Result<HttpResponse, String> {
+pub(crate) fn http_get(url: &str) -> Result<HttpResponse, String> {
     let rest = url
         .strip_prefix("http://")
         .ok_or_else(|| "only http:// is supported for detection".to_string())?;

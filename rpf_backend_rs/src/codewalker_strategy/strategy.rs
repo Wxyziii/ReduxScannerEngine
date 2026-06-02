@@ -144,6 +144,14 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         ),
     ];
 
+    // T0.6.0 (detection) and T0.6.1 (readiness) have shipped.
+    let mut milestone_plan = milestone_plan;
+    for m in milestone_plan.iter_mut() {
+        if m.id == "T0.6.0" || m.id == "T0.6.1" {
+            m.implemented = true;
+        }
+    }
+
     let blocked_items = vec![
         CodeWalkerBlockedItem {
             component: "writer".to_string(),
@@ -154,11 +162,6 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
             component: "parser".to_string(),
             reason: "Native RPF parsing is not implemented.".to_string(),
             block_type: "native_rpf_parser_not_implemented".to_string(),
-        },
-        CodeWalkerBlockedItem {
-            component: "codewalker".to_string(),
-            reason: "CodeWalker detection is not implemented (planned T0.6.0).".to_string(),
-            block_type: "codewalker_detection_not_implemented".to_string(),
         },
         CodeWalkerBlockedItem {
             component: "codewalker".to_string(),
@@ -191,7 +194,9 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         },
         active_adapter_name,
         active_adapter_is_null,
-        codewalker_detection_implemented: false,
+        // T0.6.0 shipped codewalker-detect; T0.6.1 shipped codewalker-readiness.
+        codewalker_detection_implemented: true,
+        codewalker_readiness_implemented: true,
         codewalker_execution_implemented: false,
         codewalker_write_allowed_now: false,
         writer_allowed_now: false,

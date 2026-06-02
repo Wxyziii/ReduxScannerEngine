@@ -83,6 +83,7 @@ pub struct CodeWalkerStrategyReport {
     pub active_adapter_is_null: bool,
 
     pub codewalker_detection_implemented: bool,
+    pub codewalker_readiness_implemented: bool,
     pub codewalker_execution_implemented: bool,
     pub codewalker_write_allowed_now: bool,
 

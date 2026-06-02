@@ -467,6 +467,15 @@ Commands:
                 NullRpfAdapter; canWriteArchive, replaceEndpointCalled,
                 writeEndpointsCalled, modifiesArchive, and writerAllowed are
                 always false. Exits 0.
+  codewalker-readiness [--base-url <url>] [--out <out.json>]
+                Read-only readiness probe for a local CodeWalker.API. Builds on
+                codewalker-detect, then does one extra GET /api/service-status and
+                tolerantly parses readiness / GTA path info if present. Uses GET
+                only — never POST, never replace/import/reload-services/set-config
+                or any mutation endpoint, never executes CodeWalker, never opens or
+                modifies an RPF archive. Offline yields reachable=false (not an
+                error). codewalkerApiReadyForReplace, canWriteArchive, and
+                writerAllowed are always false. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -11071,6 +11080,18 @@ fn main() -> Result<()> {
             // writerAllowed and all write capabilities stay false. Exits 0.
             let report = codewalker_api::detect::detect_codewalker_api(args.base_url.as_deref())
                 .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-readiness" => {
+            // Read-only readiness probe. Builds on detection, then does one extra
+            // safe GET /api/service-status and tolerantly parses it. Never calls
+            // replace/import/reload-services/set-config, never issues a POST or any
+            // mutation, never executes CodeWalker, never opens or modifies an RPF
+            // archive. readyForReplace/canWriteArchive/writerAllowed stay false.
+            // Offline yields a valid not-ready report. Exits 0.
+            let report =
+                codewalker_api::readiness::probe_codewalker_api_readiness(args.base_url.as_deref())
+                    .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;
         }
         _ => {
