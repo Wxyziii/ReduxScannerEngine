@@ -349,6 +349,8 @@ struct Args {
     permission_report: Option<PathBuf>,
     dry_replace_plan: Option<PathBuf>,
     target_is_test_copy: bool,
+    execution_gate_report: Option<PathBuf>,
+    execute: bool,
     confirm: Option<String>,
     base_url: Option<String>,
     changed_files: Vec<String>,
@@ -515,6 +517,17 @@ Commands:
                 opens or modifies an RPF archive. codewalkerExecutionEligible may be
                 true, but codewalkerExecutionAllowedNow, codewalkerExecutionPerformed,
                 writerAllowed, and modifiesArchive are always false. Exits 0.
+  codewalker-replace-apply --base-url <url> --execution-gate-report <path>
+                --dry-replace-plan <path> --execute --confirm "<phrase>" [--out <out.json>]
+                First scoped CodeWalker replace executor. Sends POST /api/replace-file
+                for each planned request ONLY when the execution gate is eligible, the
+                target is a copied test archive, --execute is given, and --confirm
+                exactly matches the required phrase. Copied test archives only — never
+                an original game archive. Sends ONLY /api/replace-file; never calls
+                import/reload-services/set-config or the search endpoint, never executes
+                CodeWalker as a process or any external tool, never parses RPF internals,
+                never rolls back. On any blocking gate failure NO HTTP request is sent.
+                Global writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -620,6 +633,8 @@ fn parse_args() -> Result<Args> {
         permission_report: None,
         dry_replace_plan: None,
         target_is_test_copy: false,
+        execution_gate_report: None,
+        execute: false,
         confirm: None,
         base_url: None,
         changed_files: Vec::new(),
@@ -787,6 +802,13 @@ fn parse_args() -> Result<Args> {
                 ))
             }
             "--target-is-test-copy" => args.target_is_test_copy = true,
+            "--execution-gate-report" => {
+                args.execution_gate_report = Some(PathBuf::from(
+                    it.next()
+                        .context("missing value for --execution-gate-report")?,
+                ))
+            }
+            "--execute" => args.execute = true,
             "--confirm" => args.confirm = Some(it.next().context("missing value for --confirm")?),
             "--base-url" => {
                 args.base_url = Some(it.next().context("missing value for --base-url")?)
@@ -11242,6 +11264,33 @@ fn main() -> Result<()> {
                 &entry_manifest_report,
                 &backup_report,
                 args.target_is_test_copy,
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-replace-apply" => {
+            let execution_gate_report = args
+                .execution_gate_report
+                .clone()
+                .context("codewalker-replace-apply requires --execution-gate-report")?;
+            let dry_replace_plan = args
+                .dry_replace_plan
+                .clone()
+                .context("codewalker-replace-apply requires --dry-replace-plan")?;
+            // First scoped CodeWalker replace executor. Sends POST /api/replace-file
+            // for each planned request ONLY when the T0.6.4 execution gate is
+            // eligible, the target is a copied test archive, --execute is given, and
+            // the exact confirmation phrase matches. Never calls import/reload-
+            // services/set-config or the search endpoint, never executes CodeWalker
+            // as a process or any external tool, never parses RPF internals, never
+            // rolls back. Global writerAllowed stays false; NullRpfAdapter stays
+            // active. On any blocking gate failure, NO HTTP request is sent. Exits 0.
+            let report = codewalker_api::replace_apply::apply_codewalker_replace_on_test_archive(
+                args.base_url.as_deref(),
+                &execution_gate_report,
+                &dry_replace_plan,
+                args.execute,
+                args.confirm.as_deref(),
             )
             .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;

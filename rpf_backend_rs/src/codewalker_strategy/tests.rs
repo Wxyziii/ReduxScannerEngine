@@ -50,6 +50,7 @@ mod tests {
         assert!(r.codewalker_search_resolution_implemented);
         assert!(r.codewalker_dry_replace_plan_implemented);
         assert!(r.codewalker_execution_gate_implemented);
+        assert!(r.codewalker_replace_apply_implemented);
     }
 
     #[test]
@@ -97,16 +98,19 @@ mod tests {
     fn codewalker_strategy_includes_t0_6_milestone_plan() {
         let r = build_codewalker_strategy_report().unwrap();
         let ids: Vec<&str> = r.milestone_plan.iter().map(|m| m.id.as_str()).collect();
-        for expected in ["T0.6.0", "T0.6.1", "T0.6.2", "T0.6.3", "T0.6.4", "T0.6.5"] {
+        for expected in [
+            "T0.6.0", "T0.6.1", "T0.6.2", "T0.6.3", "T0.6.4", "T0.6.5", "T0.6.6",
+        ] {
             assert!(ids.contains(&expected), "missing milestone {}", expected);
         }
-        // T0.6.0–T0.6.4 shipped; T0.6.5+ still future.
+        // T0.6.0–T0.6.5 shipped; T0.6.6+ still future.
         for m in r.milestone_plan.iter() {
             if m.id == "T0.6.0"
                 || m.id == "T0.6.1"
                 || m.id == "T0.6.2"
                 || m.id == "T0.6.3"
                 || m.id == "T0.6.4"
+                || m.id == "T0.6.5"
             {
                 assert!(m.implemented, "{} should be implemented", m.id);
             } else {
@@ -133,6 +137,7 @@ mod tests {
         assert_eq!(v["codewalkerSearchResolutionImplemented"], true);
         assert_eq!(v["codewalkerDryReplacePlanImplemented"], true);
         assert_eq!(v["codewalkerExecutionGateImplemented"], true);
+        assert_eq!(v["codewalkerReplaceApplyImplemented"], true);
         assert_eq!(v["codewalkerExecutionImplemented"], false);
         assert_eq!(v["externalToolExecutionAllowed"], false);
         assert_eq!(v["plannedBaseUrlDefault"], "http://localhost:5555");

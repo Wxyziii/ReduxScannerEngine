@@ -194,6 +194,20 @@ opens or modifies an RPF archive. `codewalkerExecutionEligible` may be true, but
 and `modifiesArchive` stay false; the active adapter stays `NullRpfAdapter`.
 See [T0_6_4_CODEWALKER_EXECUTION_GATE.md](docs/T0_6_4_CODEWALKER_EXECUTION_GATE.md) for details.
 
+### Phase T0.6.5 — CodeWalker Replace Apply on Copied Test Archive
+`codewalker-replace-apply` is the **first scoped `/api/replace-file` executor**. It
+is the first command that may send a CodeWalker replace HTTP request, and it only
+does so when the T0.6.4 execution gate is **eligible**, the target is a **copied
+test archive**, `--execute` is given, and `--confirm` exactly matches the required
+phrase. **Copied test archives only** — never an original game archive (blocked
+upstream by the gate). It sends **only** `POST /api/replace-file`; it never calls
+import/reload-services/set-config or the search endpoint, never executes CodeWalker
+as a process or any external tool, never parses RPF internals, and never rolls
+back. On any blocking gate failure **no HTTP request is sent**. Global
+`writerAllowed` stays false and the active adapter stays `NullRpfAdapter`;
+execution is scoped to this gated command only.
+See [T0_6_5_CODEWALKER_REPLACE_APPLY.md](docs/T0_6_5_CODEWALKER_REPLACE_APPLY.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

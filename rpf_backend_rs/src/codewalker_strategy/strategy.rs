@@ -139,8 +139,13 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         ),
         milestone(
             "T0.6.5",
-            "First controlled execution design (copied test archives only)",
-            "Design the first controlled execution, still targeting copied test archives only.",
+            "Controlled CodeWalker Replace Apply on copied test archive",
+            "Send scoped /api/replace-file requests for copied test archives only.",
+        ),
+        milestone(
+            "T0.6.6",
+            "Post-write verification and rollback planning",
+            "Verify written output and plan rollback for copied test archives.",
         ),
     ];
 
@@ -152,6 +157,7 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
             || m.id == "T0.6.2"
             || m.id == "T0.6.3"
             || m.id == "T0.6.4"
+            || m.id == "T0.6.5"
         {
             m.implemented = true;
         }
@@ -205,6 +211,9 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         codewalker_search_resolution_implemented: true,
         codewalker_dry_replace_plan_implemented: true,
         codewalker_execution_gate_implemented: true,
+        // Scoped executor shipped (T0.6.5): replace apply for copied test archives
+        // only. Global execution/writing stays disabled.
+        codewalker_replace_apply_implemented: true,
         codewalker_execution_implemented: false,
         codewalker_write_allowed_now: false,
         writer_allowed_now: false,

@@ -761,3 +761,185 @@ pub struct CodeWalkerExecutionGateReport {
     pub blocked_items: Vec<CodeWalkerExecutionGateBlockedItem>,
     pub summary: CodeWalkerExecutionGateSummary,
 }
+
+// ── T0.6.5 controlled replace apply on a copied test archive ─────────────────
+
+/// Overall outcome of a controlled replace-apply pass.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerReplaceApplyStatus {
+    /// Every gate passed and every replace request returned success.
+    Executed,
+    /// Requests were sent; some succeeded, some failed.
+    PartiallyExecuted,
+    /// Requests were sent but every one failed (transport or non-2xx).
+    Failed,
+    /// A strict gate failed; NO HTTP request was sent.
+    Blocked,
+    /// A required input report was missing/unparsable; NO HTTP request was sent.
+    InvalidInput,
+}
+
+/// Whether the local target file's hash changed across the apply.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerReplaceTargetHashChange {
+    Changed,
+    Unchanged,
+    /// Target not accessible locally before and/or after; cannot compare.
+    Unknown,
+}
+
+/// The MODELLED-then-SENT replace request for one planned item. The payload is
+/// conservative and fully visible; the exact CodeWalker.API shape may evolve.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerReplaceApplyRequest {
+    /// Always `POST`.
+    pub method: String,
+    /// Full URL dialed: normalized base URL + replace endpoint.
+    pub url: String,
+    /// Always `/api/replace-file`.
+    pub endpoint: String,
+    pub rpf_path: Option<String>,
+    pub archive_path: Option<String>,
+    pub source_file_path: String,
+    pub archive_relative_path: String,
+    /// Execution marker actually sent (`false` — this is a real apply, not dry).
+    pub dry_run_only: bool,
+    /// The exact JSON body sent, for auditability.
+    pub request_body_json: String,
+}
+
+/// The response captured for one replace request.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerReplaceApplyResponse {
+    pub sent: bool,
+    pub http_status: Option<u16>,
+    pub succeeded: bool,
+    pub response_body_summary: Option<String>,
+    pub error: Option<String>,
+}
+
+/// One planned item's full request/response result.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerReplaceApplyItemResult {
+    pub archive_relative_path: String,
+    pub codewalker_resolved_path: Option<String>,
+    pub source_file_path: String,
+    pub request: CodeWalkerReplaceApplyRequest,
+    pub response: CodeWalkerReplaceApplyResponse,
+}
+
+/// A replace-apply safety gate.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerReplaceApplySafetyGate {
+    pub name: String,
+    pub passed: bool,
+    pub severity: CodeWalkerApiSeverity,
+    pub message: String,
+}
+
+/// A reason the apply was blocked.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerReplaceApplyBlockedItem {
+    pub component: String,
+    pub reason: String,
+    pub block_type: String,
+}
+
+/// A non-fatal advisory observed while applying.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerReplaceApplyWarning {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerReplaceApplySummary {
+    pub total_gates: usize,
+    pub passed_gate_count: usize,
+    pub blocking_gate_count: usize,
+    pub warning_count: usize,
+    pub blocked_count: usize,
+    pub replace_request_count: usize,
+    pub successful_replace_count: usize,
+    pub failed_replace_count: usize,
+    pub codewalker_execution_performed: bool,
+    pub modifies_archive: bool,
+    /// Global writer remains disabled regardless of this scoped execution.
+    pub writer_allowed: bool,
+}
+
+/// Read-only-by-default, scoped CodeWalker replace executor. This is the FIRST
+/// milestone that may issue a CodeWalker replace HTTP request — but only when the
+/// T0.6.4 execution gate is eligible, the target is a copied test archive,
+/// `--execute` is given, and the exact confirmation phrase matches. It sends ONLY
+/// `POST /api/replace-file`. It never calls import/reload-services/set-config or
+/// the search endpoint, never executes CodeWalker as a process, never executes an
+/// external tool, never parses RPF internals, and never auto-rolls-back. The
+/// global `writerAllowed` stays `false` and the active adapter stays
+/// `NullRpfAdapter`. On any blocking gate failure, NO HTTP request is sent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerReplaceApplyReport {
+    pub status: CodeWalkerReplaceApplyStatus,
+
+    pub base_url: String,
+    pub normalized_base_url: String,
+    pub execution_gate_report_path: String,
+    pub dry_replace_plan_path: String,
+    pub target_rpf: String,
+
+    // ── Inputs / authorization ──────────────────────────────────────────────
+    pub execute_requested: bool,
+    pub confirmation_phrase_provided: bool,
+    pub confirmation_phrase_matched: bool,
+    pub expected_confirmation_phrase: String,
+    pub execution_gate_eligible: bool,
+    pub copied_test_archive_confirmed: bool,
+
+    pub selected_writer_route: String,
+    pub active_adapter_name: String,
+    pub null_adapter_active: bool,
+    pub replace_endpoint: String,
+
+    // ── Execution facts ─────────────────────────────────────────────────────
+    pub replace_requests_sent: bool,
+    pub replace_request_count: usize,
+    pub successful_replace_count: usize,
+    pub failed_replace_count: usize,
+    pub codewalker_execution_performed: bool,
+    pub codewalker_execution_allowed_now: bool,
+    /// Scoped to this command's gated execution. Global `writer_allowed` is false.
+    pub execution_scoped_writer_allowed: bool,
+    pub writer_allowed: bool,
+    pub modifies_archive: bool,
+
+    // ── Hash audit ──────────────────────────────────────────────────────────
+    pub original_target_sha256: Option<String>,
+    pub post_execution_target_sha256: Option<String>,
+    pub target_hash_changed: CodeWalkerReplaceTargetHashChange,
+
+    // ── Endpoint-isolation mirror (all conservative) ────────────────────────
+    pub import_endpoint_called: bool,
+    pub reload_services_called: bool,
+    pub set_config_called: bool,
+    pub search_endpoint_called: bool,
+    pub external_tool_executed: bool,
+    pub native_parser_used: bool,
+    pub native_writer_used: bool,
+    pub rollback_performed: bool,
+
+    pub gates: Vec<CodeWalkerReplaceApplySafetyGate>,
+    pub warnings: Vec<CodeWalkerReplaceApplyWarning>,
+    pub blocked_items: Vec<CodeWalkerReplaceApplyBlockedItem>,
+    pub item_results: Vec<CodeWalkerReplaceApplyItemResult>,
+    pub summary: CodeWalkerReplaceApplySummary,
+}
