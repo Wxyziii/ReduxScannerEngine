@@ -12,6 +12,7 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 mod apply;
+mod codewalker_strategy;
 mod diff;
 mod editors;
 mod export;
@@ -448,6 +449,12 @@ Commands:
                 blocking items still include writer/parser/adapter blockers. Never
                 opens or modifies the target archive, never modifies the bundle,
                 never creates backups, and never executes external tools.
+  codewalker-strategy [--out <out.json>]
+                Report the locked future writer route (CodeWalker.API) and the
+                planned T0.6.x milestones + safety gates. Static/deterministic:
+                reads no files, modifies nothing, and never detects, calls, or
+                executes CodeWalker. The active adapter stays NullRpfAdapter;
+                writerAllowedNow and codewalkerWriteAllowedNow are always false.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -11029,6 +11036,14 @@ fn main() -> Result<()> {
                 args.confirm.as_deref(),
             )
             .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-strategy" => {
+            // Static, deterministic strategy report. Locks CodeWalker.API as the
+            // future writer route. Reads no files, modifies nothing, executes no
+            // external tool, and never enables writing.
+            let report = codewalker_strategy::strategy::build_codewalker_strategy_report()
+                .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;
         }
         _ => {

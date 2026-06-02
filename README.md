@@ -124,6 +124,15 @@ executes external tools. This will later become the final authorization gate bef
 controlled writing.
 See [T0_5_8_WRITER_PERMISSION_TOKEN.md](docs/T0_5_8_WRITER_PERMISSION_TOKEN.md) for details.
 
+### Phase T0.5.9 — CodeWalker Writer Strategy Lock-In
+`codewalker-strategy` selects **CodeWalker.API** as the future writer route and
+records the planned T0.6.x path (detection → readiness → resolve → dry replace →
+copied-test-archive execution → verify/rollback) plus the required safety gates.
+Static and deterministic: it reads no files and causes **no archive mutation and
+no CodeWalker execution**. The active adapter stays `NullRpfAdapter` and
+`writerAllowedNow` remains false.
+See [T0_5_9_CODEWALKER_WRITER_STRATEGY.md](docs/T0_5_9_CODEWALKER_WRITER_STRATEGY.md) for details.
+
 ## What this project must not do
 
 This scanner should not:
