@@ -421,3 +421,178 @@ pub struct CodeWalkerSearchResolveReport {
     pub safety_gates: Vec<CodeWalkerSearchSafetyGate>,
     pub summary: CodeWalkerSearchSummary,
 }
+
+// ── T0.6.3 dry replace plan ─────────────────────────────────────────────────
+
+/// Overall outcome of a dry replace plan pass.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerDryReplacePlanStatus {
+    /// Every manifest entry produced a valid planned replace payload.
+    Planned,
+    /// Some entries are valid; others are blocked.
+    Partial,
+    /// No entry could be planned (all blocked).
+    Blocked,
+    /// A required input (bundle dir / manifest / resolve report) was unusable.
+    InvalidInput,
+}
+
+/// The bundle file backing a planned replace, plus its hash facts.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerDryReplaceSourceFile {
+    pub bundle_file_relative_path: String,
+    pub bundle_file_absolute_path: String,
+    pub bundle_file_exists: bool,
+    pub bundle_file_size_bytes: u64,
+    pub bundle_file_sha256: Option<String>,
+    pub manifest_sha256: Option<String>,
+    pub hash_matches_manifest: bool,
+}
+
+/// The CodeWalker-resolved archive target for a planned replace.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerDryReplaceResolvedTarget {
+    pub archive_relative_path: String,
+    pub codewalker_resolved_path: Option<String>,
+    pub match_type: Option<String>,
+    pub resolved: bool,
+    pub ambiguous: bool,
+}
+
+/// A conservative model of the future `/api/replace-file` request body. This is
+/// NEVER sent anywhere in this milestone — it is structured planning only.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerDryReplacePayload {
+    /// Always `/api/replace-file`.
+    pub endpoint: String,
+    /// Always `POST` (modelled, never issued).
+    pub method: String,
+    pub rpf_path: Option<String>,
+    pub archive_path: Option<String>,
+    pub source_file_path: String,
+    pub archive_relative_path: String,
+    /// Always `true`: this payload describes a dry-run plan only.
+    pub dry_run_only: bool,
+}
+
+/// A single planned (or blocked) replace, combining a manifest entry, the
+/// CodeWalker resolved target, and the providing bundle file.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerDryReplaceItem {
+    pub archive_relative_path: String,
+    pub codewalker_resolved_path: Option<String>,
+    pub bundle_file_relative_path: String,
+    pub bundle_file_absolute_path: String,
+    pub bundle_file_exists: bool,
+    pub bundle_file_size_bytes: u64,
+    pub bundle_file_sha256: Option<String>,
+    pub manifest_sha256: Option<String>,
+    pub hash_matches_manifest: bool,
+    pub exact_or_suffix_match_type: Option<String>,
+    pub source_file: CodeWalkerDryReplaceSourceFile,
+    pub resolved_target: CodeWalkerDryReplaceResolvedTarget,
+    /// Present only when the item is valid for a future replace.
+    pub planned_payload: Option<CodeWalkerDryReplacePayload>,
+    pub valid_for_future_replace: bool,
+    pub blocked_reason: Option<String>,
+}
+
+/// A reason an item (or the plan) cannot proceed to a future replace.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerDryReplaceBlockedItem {
+    pub component: String,
+    pub reason: String,
+    pub block_type: String,
+}
+
+/// A non-fatal advisory observed while planning.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerDryReplaceWarning {
+    pub code: String,
+    pub message: String,
+}
+
+/// A dry replace safety gate.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerDryReplaceSafetyGate {
+    pub name: String,
+    pub passed: bool,
+    pub severity: CodeWalkerApiSeverity,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerDryReplaceSummary {
+    pub item_count: usize,
+    pub valid_item_count: usize,
+    pub blocked_item_count: usize,
+    pub planned_request_count: usize,
+    pub resolved_target_count: usize,
+    pub hash_match_count: usize,
+    pub passed_gate_count: usize,
+    pub blocking_gate_count: usize,
+    pub warning_count: usize,
+    pub blocked_count: usize,
+    pub ready_for_execution: bool,
+    pub writer_allowed: bool,
+}
+
+/// Read-only CodeWalker dry replace plan. Combines the T0.5.7 entry manifest,
+/// the T0.6.2 resolve report, the providing bundle files, and an optional
+/// T0.5.8 writer-permission report into a set of MODELLED `/api/replace-file`
+/// payloads. It reads only local report/bundle files. It issues NO HTTP request
+/// of any kind, never uses POST, never calls replace/import/reload-services/
+/// set-config or any mutation endpoint, never executes CodeWalker or any external
+/// tool, and never opens or modifies an RPF archive. `readyForExecution`,
+/// `writerAllowed`, and `codewalkerExecutionAllowed` all stay `false`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerDryReplacePlanReport {
+    pub status: CodeWalkerDryReplacePlanStatus,
+
+    pub bundle_dir: String,
+    pub entry_manifest_report_path: String,
+    pub resolve_report_path: String,
+    pub permission_report_path: Option<String>,
+
+    pub selected_writer_route: String,
+    pub active_adapter_name: String,
+
+    pub dry_run_only: bool,
+    pub ready_for_execution: bool,
+    pub writer_allowed: bool,
+    pub codewalker_execution_allowed: bool,
+    pub can_write_archive: bool,
+
+    pub planned_endpoint: String,
+    pub planned_http_method: String,
+
+    pub items: Vec<CodeWalkerDryReplaceItem>,
+    pub planned_requests: Vec<CodeWalkerDryReplacePayload>,
+    pub blocked_items: Vec<CodeWalkerDryReplaceBlockedItem>,
+    pub warnings: Vec<CodeWalkerDryReplaceWarning>,
+    pub safety_gates: Vec<CodeWalkerDryReplaceSafetyGate>,
+    pub summary: CodeWalkerDryReplaceSummary,
+
+    // ── Mirrored safety facts (all conservative this milestone) ─────────────
+    pub post_requests_sent: bool,
+    pub get_requests_sent: bool,
+    pub replace_endpoint_called: bool,
+    pub import_endpoint_called: bool,
+    pub reload_services_called: bool,
+    pub set_config_called: bool,
+    pub mutation_endpoints_called: bool,
+    pub external_tool_executed: bool,
+    pub modifies_archive: bool,
+    pub real_writer_implemented: bool,
+    pub native_parser_implemented: bool,
+}

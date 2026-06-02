@@ -165,6 +165,20 @@ all targets unresolved (not an error). The active adapter stays `NullRpfAdapter`
 `canWriteArchive` and `writerAllowed` stay false.
 See [T0_6_2_CODEWALKER_SEARCH_RESOLUTION.md](docs/T0_6_2_CODEWALKER_SEARCH_RESOLUTION.md) for details.
 
+### Phase T0.6.3 — CodeWalker Dry Replace Plan
+`codewalker-dry-replace-plan` combines the exported bundle files, the RPF entry
+manifest, and the CodeWalker resolve report (plus an optional writer-permission
+report) into MODELLED `/api/replace-file` payloads describing exactly what a
+future writer would send. **Local read-only**: it reads only local report/bundle
+files and **sends no HTTP request of any kind** — it never uses POST, never calls
+`/api/replace-file`/`/api/import`/`/api/reload-services`/`/api/set-config` or any
+mutation endpoint, never executes CodeWalker or any external tool, and never opens
+or modifies an RPF archive. Item-level blockers (unresolved/ambiguous target,
+missing bundle file, hash mismatch) are reported without failing the whole report.
+`dryRunOnly` is true; the active adapter stays `NullRpfAdapter`; and
+`readyForExecution`, `writerAllowed`, and `codewalkerExecutionAllowed` stay false.
+See [T0_6_3_CODEWALKER_DRY_REPLACE_PLAN.md](docs/T0_6_3_CODEWALKER_DRY_REPLACE_PLAN.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

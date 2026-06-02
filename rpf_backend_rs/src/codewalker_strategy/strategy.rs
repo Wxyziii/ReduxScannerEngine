@@ -147,7 +147,7 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
     // T0.6.0 (detection) and T0.6.1 (readiness) have shipped.
     let mut milestone_plan = milestone_plan;
     for m in milestone_plan.iter_mut() {
-        if m.id == "T0.6.0" || m.id == "T0.6.1" || m.id == "T0.6.2" {
+        if m.id == "T0.6.0" || m.id == "T0.6.1" || m.id == "T0.6.2" || m.id == "T0.6.3" {
             m.implemented = true;
         }
     }
@@ -198,6 +198,7 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         codewalker_detection_implemented: true,
         codewalker_readiness_implemented: true,
         codewalker_search_resolution_implemented: true,
+        codewalker_dry_replace_plan_implemented: true,
         codewalker_execution_implemented: false,
         codewalker_write_allowed_now: false,
         writer_allowed_now: false,

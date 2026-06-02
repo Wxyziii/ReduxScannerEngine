@@ -345,6 +345,8 @@ struct Args {
     backup_report: Option<PathBuf>,
     readiness_report: Option<PathBuf>,
     entry_manifest_report: Option<PathBuf>,
+    resolve_report: Option<PathBuf>,
+    permission_report: Option<PathBuf>,
     confirm: Option<String>,
     base_url: Option<String>,
     changed_files: Vec<String>,
@@ -486,6 +488,16 @@ Commands:
                 never executes CodeWalker, never opens or modifies an RPF archive.
                 Offline yields all targets unresolved (not an error).
                 canWriteArchive and writerAllowed are always false. Exits 0.
+  codewalker-dry-replace-plan --bundle-dir <path> --entry-manifest-report <path>
+                --resolve-report <path> [--permission-report <path>] [--out <out.json>]
+                Combine the entry manifest, the CodeWalker resolve report, and the
+                providing bundle files into MODELLED /api/replace-file payloads for a
+                future writer. Reads only local report/bundle files. Sends NO HTTP
+                request, never uses POST, never calls replace/import/reload-services/
+                set-config or any mutation endpoint, never executes CodeWalker or any
+                external tool, never opens or modifies an RPF archive. dryRunOnly is
+                true; readyForExecution, writerAllowed, and codewalkerExecutionAllowed
+                are always false. Item-level blockers do not fail the report. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -587,6 +599,8 @@ fn parse_args() -> Result<Args> {
         backup_report: None,
         readiness_report: None,
         entry_manifest_report: None,
+        resolve_report: None,
+        permission_report: None,
         confirm: None,
         base_url: None,
         changed_files: Vec::new(),
@@ -736,6 +750,16 @@ fn parse_args() -> Result<Args> {
                 args.entry_manifest_report = Some(PathBuf::from(
                     it.next()
                         .context("missing value for --entry-manifest-report")?,
+                ))
+            }
+            "--resolve-report" => {
+                args.resolve_report = Some(PathBuf::from(
+                    it.next().context("missing value for --resolve-report")?,
+                ))
+            }
+            "--permission-report" => {
+                args.permission_report = Some(PathBuf::from(
+                    it.next().context("missing value for --permission-report")?,
                 ))
             }
             "--confirm" => args.confirm = Some(it.next().context("missing value for --confirm")?),
@@ -11118,6 +11142,35 @@ fn main() -> Result<()> {
                 &entry_manifest_report,
                 args.base_url.as_deref(),
                 args.readiness_report.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-dry-replace-plan" => {
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("codewalker-dry-replace-plan requires --bundle-dir")?;
+            let entry_manifest_report = args
+                .entry_manifest_report
+                .clone()
+                .context("codewalker-dry-replace-plan requires --entry-manifest-report")?;
+            let resolve_report = args
+                .resolve_report
+                .clone()
+                .context("codewalker-dry-replace-plan requires --resolve-report")?;
+            // Local, read-only dry replace planner. Combines the entry manifest,
+            // the resolve report, and the providing bundle files into MODELLED
+            // /api/replace-file payloads. Sends NO HTTP request, never uses POST,
+            // never calls replace/import/reload-services/set-config or any
+            // mutation endpoint, never executes CodeWalker or any external tool,
+            // and never opens or modifies an RPF archive. readyForExecution,
+            // writerAllowed, and codewalkerExecutionAllowed stay false. Exits 0.
+            let report = codewalker_api::dry_replace::build_codewalker_dry_replace_plan(
+                &bundle_dir,
+                &entry_manifest_report,
+                &resolve_report,
+                args.permission_report.as_deref(),
             )
             .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;

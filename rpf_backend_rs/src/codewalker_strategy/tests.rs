@@ -48,6 +48,7 @@ mod tests {
         assert!(r.codewalker_detection_implemented);
         assert!(r.codewalker_readiness_implemented);
         assert!(r.codewalker_search_resolution_implemented);
+        assert!(r.codewalker_dry_replace_plan_implemented);
     }
 
     #[test]
@@ -98,9 +99,9 @@ mod tests {
         for expected in ["T0.6.0", "T0.6.1", "T0.6.2", "T0.6.3", "T0.6.4", "T0.6.5"] {
             assert!(ids.contains(&expected), "missing milestone {}", expected);
         }
-        // T0.6.0 + T0.6.1 shipped; T0.6.2+ still future.
+        // T0.6.0–T0.6.3 shipped; T0.6.4+ still future.
         for m in r.milestone_plan.iter() {
-            if m.id == "T0.6.0" || m.id == "T0.6.1" || m.id == "T0.6.2" {
+            if m.id == "T0.6.0" || m.id == "T0.6.1" || m.id == "T0.6.2" || m.id == "T0.6.3" {
                 assert!(m.implemented, "{} should be implemented", m.id);
             } else {
                 assert!(!m.implemented, "{} should not be implemented", m.id);
@@ -124,6 +125,7 @@ mod tests {
         assert_eq!(v["codewalkerDetectionImplemented"], true);
         assert_eq!(v["codewalkerReadinessImplemented"], true);
         assert_eq!(v["codewalkerSearchResolutionImplemented"], true);
+        assert_eq!(v["codewalkerDryReplacePlanImplemented"], true);
         assert_eq!(v["codewalkerExecutionImplemented"], false);
         assert_eq!(v["externalToolExecutionAllowed"], false);
         assert_eq!(v["plannedBaseUrlDefault"], "http://localhost:5555");
