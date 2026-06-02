@@ -2,6 +2,7 @@ pub mod detect;
 pub mod dry_replace;
 pub mod execution_gate;
 pub mod model;
+pub mod post_write_verify;
 pub mod readiness;
 pub mod replace_apply;
 pub mod search;
@@ -10,6 +11,8 @@ pub mod search;
 mod dry_replace_tests;
 #[cfg(test)]
 mod execution_gate_tests;
+#[cfg(test)]
+mod post_write_verify_tests;
 #[cfg(test)]
 mod readiness_tests;
 #[cfg(test)]

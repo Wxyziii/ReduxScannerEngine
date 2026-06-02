@@ -350,6 +350,7 @@ struct Args {
     dry_replace_plan: Option<PathBuf>,
     target_is_test_copy: bool,
     execution_gate_report: Option<PathBuf>,
+    replace_apply_report: Option<PathBuf>,
     execute: bool,
     confirm: Option<String>,
     base_url: Option<String>,
@@ -528,6 +529,17 @@ Commands:
                 CodeWalker as a process or any external tool, never parses RPF internals,
                 never rolls back. On any blocking gate failure NO HTTP request is sent.
                 Global writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
+  codewalker-post-write-verify --target-rpf <path> --replace-apply-report <path>
+                --backup-report <path> --execution-gate-report <path>
+                --dry-replace-plan <path> [--out <out.json>]
+                Verify the result of a replace apply: compute the current target
+                SHA-256, compare it against the apply report pre/post hashes and the
+                backup report, classify the outcome, and build a rollback PLAN pointing
+                at the verified backup. Local read-only: never restores the backup,
+                never modifies the target, never calls CodeWalker, never sends an HTTP
+                request, never uses POST, never executes an external tool, never parses
+                RPF internals. rollbackExecuted and rollbackExecutionAllowed are always
+                false; the active adapter stays NullRpfAdapter. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -634,6 +646,7 @@ fn parse_args() -> Result<Args> {
         dry_replace_plan: None,
         target_is_test_copy: false,
         execution_gate_report: None,
+        replace_apply_report: None,
         execute: false,
         confirm: None,
         base_url: None,
@@ -806,6 +819,12 @@ fn parse_args() -> Result<Args> {
                 args.execution_gate_report = Some(PathBuf::from(
                     it.next()
                         .context("missing value for --execution-gate-report")?,
+                ))
+            }
+            "--replace-apply-report" => {
+                args.replace_apply_report = Some(PathBuf::from(
+                    it.next()
+                        .context("missing value for --replace-apply-report")?,
                 ))
             }
             "--execute" => args.execute = true,
@@ -11293,6 +11312,45 @@ fn main() -> Result<()> {
                 args.confirm.as_deref(),
             )
             .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-post-write-verify" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("codewalker-post-write-verify requires --target-rpf")?;
+            let replace_apply_report = args
+                .replace_apply_report
+                .clone()
+                .context("codewalker-post-write-verify requires --replace-apply-report")?;
+            let backup_report = args
+                .backup_report
+                .clone()
+                .context("codewalker-post-write-verify requires --backup-report")?;
+            let execution_gate_report = args
+                .execution_gate_report
+                .clone()
+                .context("codewalker-post-write-verify requires --execution-gate-report")?;
+            let dry_replace_plan = args
+                .dry_replace_plan
+                .clone()
+                .context("codewalker-post-write-verify requires --dry-replace-plan")?;
+            // Local, read-only post-write verification + rollback plan. Reads the
+            // target file and the four reports, compares pre/post/backup hashes,
+            // classifies the outcome, and builds a rollback PLAN. Never restores
+            // the backup, never modifies the target, never calls CodeWalker, never
+            // sends an HTTP request, never uses POST, never executes an external
+            // tool, never parses RPF internals. rollbackExecuted and
+            // rollbackExecutionAllowed stay false. Exits 0.
+            let report =
+                codewalker_api::post_write_verify::build_codewalker_post_write_verify_report(
+                    &target_rpf,
+                    &replace_apply_report,
+                    &backup_report,
+                    &execution_gate_report,
+                    &dry_replace_plan,
+                )
+                .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;
         }
         _ => {

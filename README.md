@@ -208,6 +208,19 @@ back. On any blocking gate failure **no HTTP request is sent**. Global
 execution is scoped to this gated command only.
 See [T0_6_5_CODEWALKER_REPLACE_APPLY.md](docs/T0_6_5_CODEWALKER_REPLACE_APPLY.md) for details.
 
+### Phase T0.6.6 — CodeWalker Post-Write Verification + Rollback Plan
+`codewalker-post-write-verify` is a **local read-only** check run after a replace
+apply. It computes the current target SHA-256 and compares it against the replace
+apply report's pre/post hashes and the backup report, classifies the outcome
+(no-change / failed / succeeded / suspicious), and builds a **rollback plan only**
+pointing at the verified backup. It performs **no restore** and **no archive
+mutation**: it never copies the backup over the target, never calls CodeWalker,
+never sends an HTTP request, never uses POST, never executes an external tool, and
+never parses RPF internals. `rollbackExecuted` and `rollbackExecutionAllowed` stay
+false; the active adapter stays `NullRpfAdapter` and global `writerAllowed` stays
+false.
+See [T0_6_6_CODEWALKER_POST_WRITE_VERIFY.md](docs/T0_6_6_CODEWALKER_POST_WRITE_VERIFY.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

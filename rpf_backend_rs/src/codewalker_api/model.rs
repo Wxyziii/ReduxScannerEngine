@@ -943,3 +943,191 @@ pub struct CodeWalkerReplaceApplyReport {
     pub item_results: Vec<CodeWalkerReplaceApplyItemResult>,
     pub summary: CodeWalkerReplaceApplySummary,
 }
+
+// ── T0.6.6 post-write verification + rollback plan ───────────────────────────
+
+/// Overall outcome of a post-write verification pass.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerPostWriteVerifyStatus {
+    /// Target read, hashes compared, and a verification result was determined.
+    Verified,
+    /// A required input report/target was unusable; verification incomplete.
+    InvalidInput,
+}
+
+/// The interpreted result of comparing a replace attempt against target hashes.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerPostWriteResult {
+    /// No replace request was sent and the target is unchanged.
+    NoExecutionNoChange,
+    /// A replace request failed and the target is unchanged.
+    ExecutionFailedNoChange,
+    /// A replace request failed yet the target changed — suspicious.
+    ExecutionFailedButTargetChangedSuspicious,
+    /// A replace request succeeded and the target changed — expected.
+    ExecutionSucceededTargetChanged,
+    /// A replace request succeeded yet the target is unchanged — suspicious.
+    ExecutionSucceededButTargetUnchangedSuspicious,
+    /// State could not be classified from the available facts.
+    Unknown,
+}
+
+/// Status of the generated rollback plan.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerRollbackPlanStatus {
+    /// A usable rollback plan was built from a verified backup.
+    Ready,
+    /// No usable rollback plan could be built (missing/unverified backup).
+    Unavailable,
+}
+
+/// A planned (never executed) rollback to the verified backup.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerRollbackPlan {
+    pub rollback_plan_status: CodeWalkerRollbackPlanStatus,
+    pub target_rpf: String,
+    pub backup_file_path: Option<String>,
+    pub backup_sha256: Option<String>,
+    pub target_current_sha256: Option<String>,
+    /// Always `copy_backup_over_target` — the planned (future) restore method.
+    pub restore_method_planned: String,
+    /// Always `true`: a future restore must be explicitly confirmed again.
+    pub rollback_requires_explicit_future_confirm: bool,
+    /// Always `false` in this milestone.
+    pub rollback_execution_supported: bool,
+    /// Always `false` in this milestone.
+    pub rollback_executed: bool,
+    /// Always `false` in this milestone.
+    pub safe_to_execute_now: bool,
+    pub reason: String,
+}
+
+/// A post-write verification safety gate.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerPostWriteSafetyGate {
+    pub name: String,
+    pub passed: bool,
+    pub severity: CodeWalkerApiSeverity,
+    pub message: String,
+}
+
+/// A reason verification/rollback availability is blocked.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerPostWriteBlockedItem {
+    pub component: String,
+    pub reason: String,
+    pub block_type: String,
+}
+
+/// A non-fatal advisory observed while verifying.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerPostWriteWarning {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerPostWriteSummary {
+    pub total_gates: usize,
+    pub passed_gate_count: usize,
+    pub blocking_gate_count: usize,
+    pub warning_count: usize,
+    pub blocked_count: usize,
+    pub verification_result: CodeWalkerPostWriteResult,
+    pub rollback_available: bool,
+    pub rollback_recommended: bool,
+    pub rollback_executed: bool,
+    pub modifies_archive: bool,
+}
+
+/// Read-only CodeWalker post-write verification + rollback plan. After a replace
+/// attempt, it reads the local target file, the replace-apply report (T0.6.5),
+/// the backup report (T0.5.1), the execution gate report (T0.6.4), and the dry
+/// replace plan (T0.6.3); compares pre/post/backup hashes; classifies the result;
+/// and builds a rollback PLAN pointing at the verified backup. It never restores
+/// the backup, never modifies the target, never calls CodeWalker, never sends an
+/// HTTP request, never uses POST, never executes an external tool, and never
+/// parses RPF internals. `rollbackExecuted` and `rollbackExecutionAllowed` stay
+/// `false`; the global `writerAllowed` stays `false` and the active adapter stays
+/// `NullRpfAdapter`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerPostWriteVerifyReport {
+    pub status: CodeWalkerPostWriteVerifyStatus,
+
+    // ── Target ──────────────────────────────────────────────────────────────
+    pub target_rpf: String,
+    pub target_rpf_exists: bool,
+    pub target_rpf_extension_valid: bool,
+    pub target_current_sha256: Option<String>,
+    pub target_current_size_bytes: Option<u64>,
+
+    // ── Input report paths ──────────────────────────────────────────────────
+    pub replace_apply_report_path: String,
+    pub backup_report_path: String,
+    pub execution_gate_report_path: String,
+    pub dry_replace_plan_path: String,
+
+    // ── Replace apply facts ─────────────────────────────────────────────────
+    pub replace_apply_status: Option<String>,
+    pub replace_requests_sent: bool,
+    pub successful_replace_count: u64,
+    pub failed_replace_count: u64,
+    pub replace_apply_original_target_sha256: Option<String>,
+    pub replace_apply_post_execution_target_sha256: Option<String>,
+
+    // ── Hash comparisons (true/false/unknown via Option<bool>) ──────────────
+    pub target_hash_matches_apply_report_post_hash: Option<bool>,
+    pub target_hash_changed_from_pre_apply: Option<bool>,
+    pub target_hash_matches_backup_original_hash: Option<bool>,
+
+    // ── Backup facts ────────────────────────────────────────────────────────
+    pub backup_file_path: Option<String>,
+    pub backup_file_exists: bool,
+    pub backup_hash_verified: bool,
+    pub backup_safe_for_future_write: bool,
+    pub backup_target_matches_target: Option<bool>,
+
+    // ── Execution gate facts ────────────────────────────────────────────────
+    pub execution_gate_was_eligible: bool,
+    pub copied_test_archive_confirmed: bool,
+
+    // ── Dry plan facts ──────────────────────────────────────────────────────
+    pub dry_plan_planned_request_count: u64,
+
+    // ── Verdict + rollback ──────────────────────────────────────────────────
+    pub verification_result: CodeWalkerPostWriteResult,
+    pub rollback_plan: CodeWalkerRollbackPlan,
+    pub rollback_available: bool,
+    pub rollback_recommended: bool,
+    pub rollback_executed: bool,
+    pub rollback_execution_allowed: bool,
+
+    // ── Safety mirror (all conservative) ────────────────────────────────────
+    pub http_requests_sent: bool,
+    pub post_requests_sent: bool,
+    pub replace_endpoint_called: bool,
+    pub import_endpoint_called: bool,
+    pub reload_services_called: bool,
+    pub set_config_called: bool,
+    pub external_tool_executed: bool,
+    pub native_parser_used: bool,
+    pub native_writer_used: bool,
+    pub modifies_archive: bool,
+    pub writer_allowed: bool,
+    pub active_adapter_name: String,
+    pub null_adapter_active: bool,
+
+    pub gates: Vec<CodeWalkerPostWriteSafetyGate>,
+    pub warnings: Vec<CodeWalkerPostWriteWarning>,
+    pub blocked_items: Vec<CodeWalkerPostWriteBlockedItem>,
+    pub summary: CodeWalkerPostWriteSummary,
+}

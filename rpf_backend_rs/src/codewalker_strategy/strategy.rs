@@ -147,6 +147,11 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
             "Post-write verification and rollback planning",
             "Verify written output and plan rollback for copied test archives.",
         ),
+        milestone(
+            "T0.6.7",
+            "Controlled rollback execution from backup",
+            "Restore a copied test archive from its verified backup, heavily gated.",
+        ),
     ];
 
     // T0.6.0 (detection) and T0.6.1 (readiness) have shipped.
@@ -158,6 +163,7 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
             || m.id == "T0.6.3"
             || m.id == "T0.6.4"
             || m.id == "T0.6.5"
+            || m.id == "T0.6.6"
         {
             m.implemented = true;
         }
@@ -214,6 +220,8 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         // Scoped executor shipped (T0.6.5): replace apply for copied test archives
         // only. Global execution/writing stays disabled.
         codewalker_replace_apply_implemented: true,
+        // Post-write verification + rollback planning shipped (T0.6.6).
+        codewalker_post_write_verification_implemented: true,
         codewalker_execution_implemented: false,
         codewalker_write_allowed_now: false,
         writer_allowed_now: false,
