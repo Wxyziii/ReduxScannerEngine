@@ -133,6 +133,16 @@ no CodeWalker execution**. The active adapter stays `NullRpfAdapter` and
 `writerAllowedNow` remains false.
 See [T0_5_9_CODEWALKER_WRITER_STRATEGY.md](docs/T0_5_9_CODEWALKER_WRITER_STRATEGY.md) for details.
 
+### Phase T0.6.0 — CodeWalker.API Detection Adapter
+`codewalker-detect` performs safe, read-only detection of a local CodeWalker.API
+(default `http://localhost:5555`) via HTTP `GET /` and `GET /api/service-status`.
+It **never** calls replace/import/write or any mutation endpoint, never executes
+CodeWalker as a process, and never opens or modifies an RPF archive. An offline
+server yields `reachable: false` (exit `0`, not an error). The active adapter
+stays `NullRpfAdapter`; `canWriteArchive`, `replaceEndpointCalled`,
+`writeEndpointsCalled`, `modifiesArchive`, and `writerAllowed` are always false.
+See [T0_6_0_CODEWALKER_API_DETECTION.md](docs/T0_6_0_CODEWALKER_API_DETECTION.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

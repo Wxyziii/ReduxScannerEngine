@@ -12,6 +12,7 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 mod apply;
+mod codewalker_api;
 mod codewalker_strategy;
 mod diff;
 mod editors;
@@ -345,6 +346,7 @@ struct Args {
     readiness_report: Option<PathBuf>,
     entry_manifest_report: Option<PathBuf>,
     confirm: Option<String>,
+    base_url: Option<String>,
     changed_files: Vec<String>,
     operation_id: Option<String>,
 }
@@ -455,6 +457,16 @@ Commands:
                 reads no files, modifies nothing, and never detects, calls, or
                 executes CodeWalker. The active adapter stays NullRpfAdapter;
                 writerAllowedNow and codewalkerWriteAllowedNow are always false.
+  codewalker-detect [--base-url <url>] [--out <out.json>]
+                Detect a local CodeWalker.API using read-only HTTP GET checks of
+                the base URL (default http://localhost:5555): root and
+                /api/service-status. Never calls replace/import/write or any
+                mutation endpoint, never executes CodeWalker as a process, and
+                never opens or modifies an RPF archive. An offline server yields
+                reachable=false (not an error). The active adapter stays
+                NullRpfAdapter; canWriteArchive, replaceEndpointCalled,
+                writeEndpointsCalled, modifiesArchive, and writerAllowed are
+                always false. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -557,6 +569,7 @@ fn parse_args() -> Result<Args> {
         readiness_report: None,
         entry_manifest_report: None,
         confirm: None,
+        base_url: None,
         changed_files: Vec::new(),
         operation_id: None,
     };
@@ -707,6 +720,9 @@ fn parse_args() -> Result<Args> {
                 ))
             }
             "--confirm" => args.confirm = Some(it.next().context("missing value for --confirm")?),
+            "--base-url" => {
+                args.base_url = Some(it.next().context("missing value for --base-url")?)
+            }
             "--analyze-text" => args.analyze_text = true,
             "--build-learning-corpus" => args.build_learning_corpus = true,
             "--all" => {
@@ -11043,6 +11059,17 @@ fn main() -> Result<()> {
             // future writer route. Reads no files, modifies nothing, executes no
             // external tool, and never enables writing.
             let report = codewalker_strategy::strategy::build_codewalker_strategy_report()
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-detect" => {
+            // Read-only detection of a local CodeWalker.API. Performs only safe
+            // HTTP GET checks (root + /api/service-status) against the base URL.
+            // Never calls replace/import/write or any mutation endpoint, never
+            // executes CodeWalker as a process, never opens or modifies an RPF
+            // archive. Offline servers yield reachable=false, not an error.
+            // writerAllowed and all write capabilities stay false. Exits 0.
+            let report = codewalker_api::detect::detect_codewalker_api(args.base_url.as_deref())
                 .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;
         }
