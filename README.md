@@ -179,6 +179,21 @@ missing bundle file, hash mismatch) are reported without failing the whole repor
 `readyForExecution`, `writerAllowed`, and `codewalkerExecutionAllowed` stay false.
 See [T0_6_3_CODEWALKER_DRY_REPLACE_PLAN.md](docs/T0_6_3_CODEWALKER_DRY_REPLACE_PLAN.md) for details.
 
+### Phase T0.6.4 — CodeWalker Copied-Test-Archive Execution Gate
+`codewalker-execution-gate` is a **local read-only** gate for a future replace
+execution. It decides whether a future CodeWalker replace attempt against the
+target archive would even be **eligible** — and never executes anything. Only a
+**copied test archive** (confirmed via `--target-is-test-copy`, not an original
+game path) can be eligible; it **blocks original game install paths**. It reads
+the dry replace, permission, readiness, entry manifest, and backup reports and
+**sends no HTTP request of any kind** — never uses POST, never calls
+`/api/replace-file`/`/api/import`/`/api/reload-services`/`/api/set-config` or any
+mutation endpoint, never executes CodeWalker or any external tool, and never
+opens or modifies an RPF archive. `codewalkerExecutionEligible` may be true, but
+`codewalkerExecutionAllowedNow`, `codewalkerExecutionPerformed`, `writerAllowed`,
+and `modifiesArchive` stay false; the active adapter stays `NullRpfAdapter`.
+See [T0_6_4_CODEWALKER_EXECUTION_GATE.md](docs/T0_6_4_CODEWALKER_EXECUTION_GATE.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

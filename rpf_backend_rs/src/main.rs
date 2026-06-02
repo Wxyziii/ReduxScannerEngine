@@ -347,6 +347,8 @@ struct Args {
     entry_manifest_report: Option<PathBuf>,
     resolve_report: Option<PathBuf>,
     permission_report: Option<PathBuf>,
+    dry_replace_plan: Option<PathBuf>,
+    target_is_test_copy: bool,
     confirm: Option<String>,
     base_url: Option<String>,
     changed_files: Vec<String>,
@@ -498,6 +500,21 @@ Commands:
                 external tool, never opens or modifies an RPF archive. dryRunOnly is
                 true; readyForExecution, writerAllowed, and codewalkerExecutionAllowed
                 are always false. Item-level blockers do not fail the report. Exits 0.
+  codewalker-execution-gate --target-rpf <path> --dry-replace-plan <path>
+                --permission-report <path> --readiness-report <path>
+                --entry-manifest-report <path> --backup-report <path>
+                --target-is-test-copy [--out <out.json>]
+                Decide whether a FUTURE CodeWalker replace attempt against the target
+                archive would even be eligible. Reads only the local target fixture
+                and the five report files. Eligibility requires a copied test archive
+                (confirmed via --target-is-test-copy, not an original game path) plus a
+                valid dry replace plan, permission token, readiness report, entry
+                manifest, and a hash-verified backup. Sends NO HTTP request, never uses
+                POST, never calls replace/import/reload-services/set-config or any
+                mutation endpoint, never executes CodeWalker or any external tool, never
+                opens or modifies an RPF archive. codewalkerExecutionEligible may be
+                true, but codewalkerExecutionAllowedNow, codewalkerExecutionPerformed,
+                writerAllowed, and modifiesArchive are always false. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -601,6 +618,8 @@ fn parse_args() -> Result<Args> {
         entry_manifest_report: None,
         resolve_report: None,
         permission_report: None,
+        dry_replace_plan: None,
+        target_is_test_copy: false,
         confirm: None,
         base_url: None,
         changed_files: Vec::new(),
@@ -762,6 +781,12 @@ fn parse_args() -> Result<Args> {
                     it.next().context("missing value for --permission-report")?,
                 ))
             }
+            "--dry-replace-plan" => {
+                args.dry_replace_plan = Some(PathBuf::from(
+                    it.next().context("missing value for --dry-replace-plan")?,
+                ))
+            }
+            "--target-is-test-copy" => args.target_is_test_copy = true,
             "--confirm" => args.confirm = Some(it.next().context("missing value for --confirm")?),
             "--base-url" => {
                 args.base_url = Some(it.next().context("missing value for --base-url")?)
@@ -11171,6 +11196,52 @@ fn main() -> Result<()> {
                 &entry_manifest_report,
                 &resolve_report,
                 args.permission_report.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-execution-gate" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("codewalker-execution-gate requires --target-rpf")?;
+            let dry_replace_plan = args
+                .dry_replace_plan
+                .clone()
+                .context("codewalker-execution-gate requires --dry-replace-plan")?;
+            let permission_report = args
+                .permission_report
+                .clone()
+                .context("codewalker-execution-gate requires --permission-report")?;
+            let readiness_report = args
+                .readiness_report
+                .clone()
+                .context("codewalker-execution-gate requires --readiness-report")?;
+            let entry_manifest_report = args
+                .entry_manifest_report
+                .clone()
+                .context("codewalker-execution-gate requires --entry-manifest-report")?;
+            let backup_report = args
+                .backup_report
+                .clone()
+                .context("codewalker-execution-gate requires --backup-report")?;
+            // Local, read-only copied-test-archive execution gate. Decides
+            // whether a FUTURE CodeWalker replace attempt would be eligible.
+            // Reads only the local target fixture and the five report files.
+            // Sends NO HTTP request, never uses POST, never calls replace/import/
+            // reload-services/set-config or any mutation endpoint, never executes
+            // CodeWalker or any external tool, and never opens or modifies an RPF
+            // archive. codewalkerExecutionEligible may be true, but
+            // codewalkerExecutionAllowedNow, codewalkerExecutionPerformed,
+            // writerAllowed, and modifiesArchive stay false. Exits 0.
+            let report = codewalker_api::execution_gate::build_codewalker_execution_gate_report(
+                &target_rpf,
+                &dry_replace_plan,
+                &permission_report,
+                &readiness_report,
+                &entry_manifest_report,
+                &backup_report,
+                args.target_is_test_copy,
             )
             .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;

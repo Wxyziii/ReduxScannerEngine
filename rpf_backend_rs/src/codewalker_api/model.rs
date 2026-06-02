@@ -596,3 +596,168 @@ pub struct CodeWalkerDryReplacePlanReport {
     pub real_writer_implemented: bool,
     pub native_parser_implemented: bool,
 }
+
+// ── T0.6.4 copied-test-archive execution gate ───────────────────────────────
+
+/// Overall verdict of an execution-gate pass. Even when `Eligible`, NO execution
+/// happens in this milestone.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerExecutionGateStatus {
+    /// Every strict copied-test-archive gate passed. A future attempt would be
+    /// eligible — but is still not performed or allowed now.
+    Eligible,
+    /// At least one strict gate failed. A future attempt is not eligible.
+    Blocked,
+    /// A required input report/file was unusable; eligibility cannot be decided.
+    InvalidInput,
+}
+
+/// How the target archive path was classified for test-execution eligibility.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerTargetArchiveClassification {
+    /// A copied test archive explicitly confirmed as a test copy, not in an
+    /// original game install path. The only class eligible for future execution.
+    CopiedTestArchive,
+    /// The path looks like an original game install — always blocked.
+    OriginalGameArchiveSuspected,
+    /// Not obviously a game path, but not confirmed as a test copy either.
+    UnknownArchive,
+    /// The target file does not exist.
+    Missing,
+    /// The target exists but does not have a `.rpf` extension.
+    InvalidExtension,
+}
+
+/// Load/parse status of one input report this gate reads.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerExecutionInputReportStatus {
+    /// Present, parsed, and satisfied the gate's expectations.
+    Valid,
+    /// Present and parsed, but did not satisfy expectations.
+    Invalid,
+    /// Present but could not be parsed.
+    Unparsable,
+    /// File was not found.
+    Missing,
+}
+
+/// A single execution-gate check.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerExecutionGate {
+    pub name: String,
+    pub passed: bool,
+    pub severity: CodeWalkerApiSeverity,
+    pub message: String,
+}
+
+/// A reason a future execution attempt is not eligible.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerExecutionGateBlockedItem {
+    pub component: String,
+    pub reason: String,
+    pub block_type: String,
+}
+
+/// A non-fatal advisory observed while gating.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerExecutionGateWarning {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerExecutionGateSummary {
+    pub total_gates: usize,
+    pub passed_gate_count: usize,
+    pub blocking_gate_count: usize,
+    pub warning_count: usize,
+    pub blocked_count: usize,
+    pub strict_gates_all_passed: bool,
+    pub codewalker_execution_eligible: bool,
+    pub codewalker_execution_allowed_now: bool,
+    pub codewalker_execution_performed: bool,
+    pub writer_allowed: bool,
+    pub modifies_archive: bool,
+}
+
+/// Read-only CodeWalker copied-test-archive execution gate. Decides whether a
+/// FUTURE CodeWalker replace attempt against the given target archive would even
+/// be eligible. It reads only local report/fixture files. It issues NO HTTP
+/// request of any kind, never uses POST, never calls replace/import/
+/// reload-services/set-config or any mutation endpoint, never executes CodeWalker
+/// or any external tool, and never opens or modifies an RPF archive. Even when
+/// `codewalkerExecutionEligible` is `true`, `codewalkerExecutionAllowedNow`,
+/// `codewalkerExecutionPerformed`, `writerAllowed`, and `modifiesArchive` all
+/// stay `false` — no execution happens in this milestone.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerExecutionGateReport {
+    pub status: CodeWalkerExecutionGateStatus,
+
+    // ── Target archive facts ────────────────────────────────────────────────
+    pub target_rpf: String,
+    pub target_rpf_exists: bool,
+    pub target_rpf_extension_valid: bool,
+    pub target_archive_classification: CodeWalkerTargetArchiveClassification,
+    pub target_marked_as_test_copy: bool,
+    pub target_path_allowed_for_test_execution: bool,
+
+    // ── Input report paths ──────────────────────────────────────────────────
+    pub dry_replace_plan_path: String,
+    pub permission_report_path: String,
+    pub readiness_report_path: String,
+    pub entry_manifest_report_path: String,
+    pub backup_report_path: String,
+
+    // ── Input report validity ───────────────────────────────────────────────
+    pub dry_replace_plan_status: CodeWalkerExecutionInputReportStatus,
+    pub permission_report_status: CodeWalkerExecutionInputReportStatus,
+    pub readiness_report_status: CodeWalkerExecutionInputReportStatus,
+    pub entry_manifest_report_status: CodeWalkerExecutionInputReportStatus,
+    pub backup_report_status: CodeWalkerExecutionInputReportStatus,
+
+    pub dry_replace_plan_valid: bool,
+    pub permission_report_valid: bool,
+    pub readiness_report_valid: bool,
+    pub entry_manifest_report_valid: bool,
+    pub backup_report_valid: bool,
+
+    // ── Extracted facts ─────────────────────────────────────────────────────
+    pub backup_hash_verified: bool,
+    pub permission_token_present: bool,
+    pub dry_plan_has_planned_requests: bool,
+    /// Expected `false` from T0.6.3 but still valid as a dry plan.
+    pub dry_plan_ready_for_execution: bool,
+
+    // ── Verdict ──────────────────────────────────────────────────────────────
+    pub codewalker_execution_eligible: bool,
+    pub codewalker_execution_performed: bool,
+    pub codewalker_execution_allowed_now: bool,
+    pub writer_allowed: bool,
+
+    // ── Adapter / safety mirror (all conservative this milestone) ───────────
+    pub active_adapter_name: String,
+    pub null_adapter_active: bool,
+    pub replace_endpoint_called: bool,
+    pub import_endpoint_called: bool,
+    pub reload_services_called: bool,
+    pub set_config_called: bool,
+    pub post_requests_sent: bool,
+    pub http_requests_sent: bool,
+    pub external_tool_executed: bool,
+    pub modifies_archive: bool,
+    pub real_writer_implemented: bool,
+    pub native_parser_implemented: bool,
+
+    pub gates: Vec<CodeWalkerExecutionGate>,
+    pub warnings: Vec<CodeWalkerExecutionGateWarning>,
+    pub blocked_items: Vec<CodeWalkerExecutionGateBlockedItem>,
+    pub summary: CodeWalkerExecutionGateSummary,
+}

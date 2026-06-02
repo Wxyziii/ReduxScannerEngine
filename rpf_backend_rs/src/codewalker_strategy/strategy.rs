@@ -134,20 +134,25 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         ),
         milestone(
             "T0.6.4",
-            "CodeWalker Replace Apply on copied test archive only",
-            "Apply replaces strictly on a copied test archive.",
+            "CodeWalker Copied-Test-Archive Execution Gate",
+            "Decide whether a future replace attempt on a copied test archive is eligible.",
         ),
         milestone(
             "T0.6.5",
-            "Post-write verification and rollback",
-            "Verify written output and roll back on mismatch.",
+            "First controlled execution design (copied test archives only)",
+            "Design the first controlled execution, still targeting copied test archives only.",
         ),
     ];
 
     // T0.6.0 (detection) and T0.6.1 (readiness) have shipped.
     let mut milestone_plan = milestone_plan;
     for m in milestone_plan.iter_mut() {
-        if m.id == "T0.6.0" || m.id == "T0.6.1" || m.id == "T0.6.2" || m.id == "T0.6.3" {
+        if m.id == "T0.6.0"
+            || m.id == "T0.6.1"
+            || m.id == "T0.6.2"
+            || m.id == "T0.6.3"
+            || m.id == "T0.6.4"
+        {
             m.implemented = true;
         }
     }
@@ -199,6 +204,7 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         codewalker_readiness_implemented: true,
         codewalker_search_resolution_implemented: true,
         codewalker_dry_replace_plan_implemented: true,
+        codewalker_execution_gate_implemented: true,
         codewalker_execution_implemented: false,
         codewalker_write_allowed_now: false,
         writer_allowed_now: false,
