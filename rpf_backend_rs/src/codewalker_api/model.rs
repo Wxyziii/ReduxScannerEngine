@@ -1265,3 +1265,175 @@ pub struct CodeWalkerRollbackRestoreReport {
     pub blocked_items: Vec<CodeWalkerRollbackRestoreBlockedItem>,
     pub summary: CodeWalkerRollbackRestoreSummary,
 }
+
+// ── T0.6.8: Real copied-archive manual test harness ─────────────────────────
+
+/// The mode the manual harness ran in.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerManualHarnessMode {
+    /// Only build a structured plan + command checklist. Default. Writes nothing.
+    PlanOnly,
+    /// Build the plan AND write a safe PowerShell checklist/script under .tmp or
+    /// the provided project dir. Still calls nothing, modifies no archive.
+    GenerateScript,
+    /// Execution was requested. Even so, this milestone does NOT perform full
+    /// automatic execution; it only confirms authorization and reports.
+    ExecuteExistingPipeline,
+}
+
+/// Overall outcome of a manual harness run.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerManualHarnessStatus {
+    /// A plan + command checklist was produced; nothing was executed.
+    Planned,
+    /// A plan was produced and a safe script/checklist file was written.
+    ScriptGenerated,
+    /// A blocking gate failed (e.g. original game path, not a test copy).
+    Blocked,
+    /// The target file was missing or not a `.rpf`.
+    InvalidInput,
+    /// Execution was requested (and possibly confirmed) but is intentionally NOT
+    /// performed automatically in this milestone.
+    ExecuteRequestedNotPerformed,
+}
+
+/// One planned step in the full real copied-test flow.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerManualHarnessStep {
+    pub index: usize,
+    pub command_name: String,
+    pub title: String,
+    pub description: String,
+    /// Names of report/path inputs this step depends on.
+    pub required_inputs: Vec<String>,
+    /// True when every required input for this step is available.
+    pub inputs_available: bool,
+    /// True when this step would (in a future, fully wired flow) mutate the
+    /// copied test archive. Informational only — nothing runs here.
+    pub mutates_archive: bool,
+    pub note: Option<String>,
+}
+
+/// One optional input the harness was given (or not).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerManualHarnessInput {
+    pub name: String,
+    pub path: Option<String>,
+    pub provided: bool,
+    pub exists: bool,
+}
+
+/// A manual-harness safety gate.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerManualHarnessSafetyGate {
+    pub name: String,
+    pub passed: bool,
+    pub severity: CodeWalkerApiSeverity,
+    pub message: String,
+}
+
+/// A reason the harness refused or limited itself.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerManualHarnessBlockedItem {
+    pub component: String,
+    pub reason: String,
+    pub block_type: String,
+}
+
+/// A non-fatal advisory.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerManualHarnessWarning {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerManualHarnessSummary {
+    pub total_gates: usize,
+    pub passed_gate_count: usize,
+    pub blocking_gate_count: usize,
+    pub warning_count: usize,
+    pub blocked_count: usize,
+    pub planned_step_count: usize,
+    pub generated_command_count: usize,
+    pub missing_input_count: usize,
+    pub script_generated: bool,
+    pub execution_performed: bool,
+    pub modifies_archive: bool,
+}
+
+/// The first real copied-archive manual test harness (T0.6.8).
+///
+/// Prepares, validates, and documents a real copied-archive test run that a human
+/// drives by hand through the existing CodeWalker pipeline. It builds a structured
+/// plan + command checklist and, when asked, writes a safe PowerShell script under
+/// `.tmp` or a provided project dir. In plan/generate-script mode it calls nothing,
+/// sends NO HTTP request, executes no external tool, parses no RPF internals, and
+/// NEVER modifies the target archive. Original game install paths are blocked. Even
+/// in execute mode this milestone keeps `execution_performed` `false`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerManualHarnessReport {
+    pub status: CodeWalkerManualHarnessStatus,
+    pub mode: CodeWalkerManualHarnessMode,
+    pub base_url: String,
+
+    // ── Target ──────────────────────────────────────────────────────────────
+    pub target_rpf: String,
+    pub target_rpf_exists: bool,
+    pub target_rpf_extension_valid: bool,
+    pub target_classification: CodeWalkerTargetArchiveClassification,
+    pub target_marked_as_test_copy: bool,
+    pub target_path_allowed_for_test_execution: bool,
+    pub original_game_path_blocked: bool,
+    /// SHA-256 of the target before any harness work (informational).
+    pub target_sha256_before: Option<String>,
+    /// SHA-256 of the target after the harness finished. Must equal `before`.
+    pub target_sha256_after: Option<String>,
+
+    // ── Optional inputs ─────────────────────────────────────────────────────
+    pub project_dir: Option<String>,
+    pub bundle_dir: Option<String>,
+    pub patch_plan_path: Option<String>,
+    pub entry_manifest_report: Option<String>,
+    pub dry_replace_plan_report: Option<String>,
+    pub execution_gate_report: Option<String>,
+    pub backup_report: Option<String>,
+    pub inputs: Vec<CodeWalkerManualHarnessInput>,
+
+    // ── Plan / output ───────────────────────────────────────────────────────
+    pub planned_steps: Vec<CodeWalkerManualHarnessStep>,
+    pub generated_commands: Vec<String>,
+    pub generated_script_path: Option<String>,
+
+    // ── Execution authorization (no execution performed) ────────────────────
+    pub execute_requested: bool,
+    pub confirmation_phrase_provided: bool,
+    pub confirmation_phrase_matched: bool,
+    pub expected_confirmation_phrase: String,
+    pub execution_performed: bool,
+
+    // ── Safety mirror ───────────────────────────────────────────────────────
+    pub codewalker_called: bool,
+    pub http_requests_sent: bool,
+    pub post_requests_sent: bool,
+    pub modifies_archive: bool,
+    pub native_parser_used: bool,
+    pub external_tool_executed: bool,
+    pub writer_allowed: bool,
+    pub active_adapter_name: String,
+    pub null_adapter_active: bool,
+
+    pub gates: Vec<CodeWalkerManualHarnessSafetyGate>,
+    pub warnings: Vec<CodeWalkerManualHarnessWarning>,
+    pub blocked_items: Vec<CodeWalkerManualHarnessBlockedItem>,
+    pub summary: CodeWalkerManualHarnessSummary,
+}

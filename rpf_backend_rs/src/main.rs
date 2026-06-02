@@ -356,6 +356,8 @@ struct Args {
     execute_rollback: bool,
     confirm: Option<String>,
     base_url: Option<String>,
+    project_dir: Option<PathBuf>,
+    generate_script: bool,
     changed_files: Vec<String>,
     operation_id: Option<String>,
 }
@@ -554,6 +556,22 @@ Commands:
                 executes an external tool, never parses RPF internals, never creates a
                 backup. On any blocking gate failure the target is NOT modified. Global
                 writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
+  codewalker-manual-harness --target-rpf <path> --target-is-test-copy [--base-url <url>]
+                [--project-dir <path>] [--bundle-dir <path>] [--generate-script]
+                [--execute] [--confirm "<phrase>"] [--out <out.json>]
+                First real copied-archive MANUAL TEST HARNESS. Validates the copied
+                test target, classifies it conservatively (original game paths are
+                blocked), and produces a structured plan plus a manual command
+                checklist for the full CodeWalker copied-test flow (probe, backup,
+                detect, readiness, entry manifest, resolve, dry replace, permission,
+                execution gate, replace apply, post-write verify, optional rollback).
+                With --generate-script it writes a safe PowerShell checklist under
+                .tmp or --project-dir, with the mutating commands commented out behind
+                placeholders. In plan/generate-script mode it calls nothing, sends NO
+                HTTP request, never uses POST, executes no external tool, parses no RPF
+                internals, and NEVER modifies the target archive. Even when --execute
+                is given and --confirm matches, this milestone keeps executionPerformed
+                false and performs no automatic full execution. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -666,6 +684,8 @@ fn parse_args() -> Result<Args> {
         execute_rollback: false,
         confirm: None,
         base_url: None,
+        project_dir: None,
+        generate_script: false,
         changed_files: Vec::new(),
         operation_id: None,
     };
@@ -849,6 +869,12 @@ fn parse_args() -> Result<Args> {
                         .context("missing value for --post-write-verify-report")?,
                 ))
             }
+            "--project-dir" => {
+                args.project_dir = Some(PathBuf::from(
+                    it.next().context("missing value for --project-dir")?,
+                ))
+            }
+            "--generate-script" => args.generate_script = true,
             "--execute" => args.execute = true,
             "--execute-rollback" => args.execute_rollback = true,
             "--confirm" => args.confirm = Some(it.next().context("missing value for --confirm")?),
@@ -11404,6 +11430,34 @@ fn main() -> Result<()> {
                 &post_write_verify_report,
                 &backup_report,
                 args.execute_rollback,
+                args.confirm.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-manual-harness" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("codewalker-manual-harness requires --target-rpf")?;
+            // First real copied-archive manual test harness. Validates the copied
+            // test target, classifies it conservatively (blocking original game
+            // paths), and produces a structured plan + manual command checklist for
+            // the full CodeWalker copied-test flow. Optionally writes a safe
+            // PowerShell checklist/script under .tmp or the provided project dir.
+            // In plan/generate-script mode it calls nothing, sends NO HTTP request,
+            // never uses POST, executes no external tool, parses no RPF internals,
+            // and NEVER modifies the target archive. Even when --execute is given
+            // and --confirm matches, this milestone keeps executionPerformed false
+            // and performs no automatic full execution. Exits 0.
+            let report = codewalker_api::manual_harness::build_codewalker_manual_test_harness(
+                &target_rpf,
+                args.base_url.as_deref(),
+                args.target_is_test_copy,
+                args.project_dir.as_deref(),
+                args.bundle_dir.as_deref(),
+                args.generate_script,
+                args.execute,
                 args.confirm.as_deref(),
             )
             .map_err(anyhow::Error::msg)?;

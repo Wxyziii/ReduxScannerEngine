@@ -53,6 +53,7 @@ mod tests {
         assert!(r.codewalker_replace_apply_implemented);
         assert!(r.codewalker_post_write_verification_implemented);
         assert!(r.codewalker_rollback_restore_implemented);
+        assert!(r.codewalker_manual_harness_implemented);
     }
 
     #[test]
@@ -102,6 +103,7 @@ mod tests {
         let ids: Vec<&str> = r.milestone_plan.iter().map(|m| m.id.as_str()).collect();
         for expected in [
             "T0.6.0", "T0.6.1", "T0.6.2", "T0.6.3", "T0.6.4", "T0.6.5", "T0.6.6", "T0.6.7",
+            "T0.6.8",
         ] {
             assert!(ids.contains(&expected), "missing milestone {}", expected);
         }
@@ -134,6 +136,7 @@ mod tests {
         assert_eq!(v["codewalkerReplaceApplyImplemented"], true);
         assert_eq!(v["codewalkerPostWriteVerificationImplemented"], true);
         assert_eq!(v["codewalkerRollbackRestoreImplemented"], true);
+        assert_eq!(v["codewalkerManualHarnessImplemented"], true);
         assert_eq!(v["codewalkerExecutionImplemented"], false);
         assert_eq!(v["externalToolExecutionAllowed"], false);
         assert_eq!(v["plannedBaseUrlDefault"], "http://localhost:5555");

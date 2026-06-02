@@ -152,6 +152,11 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
             "Controlled rollback execution from backup",
             "Restore a copied test archive from its verified backup, heavily gated.",
         ),
+        milestone(
+            "T0.6.8",
+            "Real Copied Archive Manual Test Harness",
+            "Prepare a safe copied-test-archive command checklist/script; no archive mutation.",
+        ),
     ];
 
     // T0.6.0 (detection) and T0.6.1 (readiness) have shipped.
@@ -165,6 +170,7 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
             || m.id == "T0.6.5"
             || m.id == "T0.6.6"
             || m.id == "T0.6.7"
+            || m.id == "T0.6.8"
         {
             m.implemented = true;
         }
@@ -225,6 +231,9 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         codewalker_post_write_verification_implemented: true,
         // Controlled rollback restore shipped (T0.6.7): copied test archives only.
         codewalker_rollback_restore_implemented: true,
+        // Real copied-archive manual test harness shipped (T0.6.8): plan/checklist
+        // first, no archive mutation in plan mode, original game paths blocked.
+        codewalker_manual_harness_implemented: true,
         codewalker_execution_implemented: false,
         codewalker_write_allowed_now: false,
         writer_allowed_now: false,

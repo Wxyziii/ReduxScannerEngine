@@ -235,6 +235,22 @@ Global `writerAllowed` stays false and the active adapter stays `NullRpfAdapter`
 the only mutation is the gated `copy_backup_over_target`.
 See [T0_6_7_CODEWALKER_ROLLBACK_RESTORE.md](docs/T0_6_7_CODEWALKER_ROLLBACK_RESTORE.md) for details.
 
+### Phase T0.6.8 — CodeWalker Manual Test Harness
+`codewalker-manual-harness` is the first **real copied-test-archive** test harness:
+a safe copied-test archive command checklist/script generator with **no archive
+mutation in plan mode** and original game paths **blocked**. It validates the copied
+test target, classifies it conservatively, and produces a structured plan plus a
+manual command checklist for the full CodeWalker copied-test flow (probe → backup →
+detect → readiness → entry manifest → resolve → dry replace → permission → execution
+gate → replace apply → post-write verify → optional rollback). With
+`--generate-script` it writes a safe PowerShell checklist under `.tmp` or
+`--project-dir`, with the mutating commands commented out behind placeholders. In
+plan/generate-script mode it **calls nothing**, sends **no HTTP request**, never uses
+POST, executes no external tool, parses no RPF internals, and **never modifies the
+target archive**. Even when `--execute` is given and `--confirm` matches, this
+milestone keeps `executionPerformed` false and performs no automatic full execution.
+See [T0_6_8_CODEWALKER_MANUAL_HARNESS.md](docs/T0_6_8_CODEWALKER_MANUAL_HARNESS.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

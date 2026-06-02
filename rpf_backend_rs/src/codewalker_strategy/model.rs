@@ -90,6 +90,7 @@ pub struct CodeWalkerStrategyReport {
     pub codewalker_replace_apply_implemented: bool,
     pub codewalker_post_write_verification_implemented: bool,
     pub codewalker_rollback_restore_implemented: bool,
+    pub codewalker_manual_harness_implemented: bool,
     pub codewalker_execution_implemented: bool,
     pub codewalker_write_allowed_now: bool,
 
