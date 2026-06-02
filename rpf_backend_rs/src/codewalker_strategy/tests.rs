@@ -47,6 +47,7 @@ mod tests {
         // T0.6.0 shipped codewalker-detect; T0.6.1 shipped codewalker-readiness.
         assert!(r.codewalker_detection_implemented);
         assert!(r.codewalker_readiness_implemented);
+        assert!(r.codewalker_search_resolution_implemented);
     }
 
     #[test]
@@ -99,7 +100,7 @@ mod tests {
         }
         // T0.6.0 + T0.6.1 shipped; T0.6.2+ still future.
         for m in r.milestone_plan.iter() {
-            if m.id == "T0.6.0" || m.id == "T0.6.1" {
+            if m.id == "T0.6.0" || m.id == "T0.6.1" || m.id == "T0.6.2" {
                 assert!(m.implemented, "{} should be implemented", m.id);
             } else {
                 assert!(!m.implemented, "{} should not be implemented", m.id);
@@ -122,6 +123,7 @@ mod tests {
         assert_eq!(v["codewalkerWriteAllowedNow"], false);
         assert_eq!(v["codewalkerDetectionImplemented"], true);
         assert_eq!(v["codewalkerReadinessImplemented"], true);
+        assert_eq!(v["codewalkerSearchResolutionImplemented"], true);
         assert_eq!(v["codewalkerExecutionImplemented"], false);
         assert_eq!(v["externalToolExecutionAllowed"], false);
         assert_eq!(v["plannedBaseUrlDefault"], "http://localhost:5555");

@@ -476,6 +476,16 @@ Commands:
                 modifies an RPF archive. Offline yields reachable=false (not an
                 error). codewalkerApiReadyForReplace, canWriteArchive, and
                 writerAllowed are always false. Exits 0.
+  codewalker-resolve-targets --entry-manifest-report <path> [--base-url <url>]
+                [--readiness-report <path>] [--out <out.json>]
+                Map RPF entry manifest entries to CodeWalker search results using
+                read-only GET /api/search-file?filename=<name>. Resolves a target
+                only on a unique exact or unique suffix match; filename-only and
+                ambiguous matches stay unresolved. GET-only — never POST, never
+                replace/import/reload-services/set-config or any mutation endpoint,
+                never executes CodeWalker, never opens or modifies an RPF archive.
+                Offline yields all targets unresolved (not an error).
+                canWriteArchive and writerAllowed are always false. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -11092,6 +11102,24 @@ fn main() -> Result<()> {
             let report =
                 codewalker_api::readiness::probe_codewalker_api_readiness(args.base_url.as_deref())
                     .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-resolve-targets" => {
+            let entry_manifest_report = args
+                .entry_manifest_report
+                .clone()
+                .context("codewalker-resolve-targets requires --entry-manifest-report")?;
+            // Read-only search/target-resolution planner. Reads the entry manifest
+            // and issues only safe GET /api/search-file calls. Never calls
+            // replace/import/reload-services/set-config, never issues a POST or any
+            // mutation, never executes CodeWalker, never opens or modifies an RPF
+            // archive. canWriteArchive/writerAllowed stay false. Exits 0.
+            let report = codewalker_api::search::build_codewalker_search_resolve_report(
+                &entry_manifest_report,
+                args.base_url.as_deref(),
+                args.readiness_report.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;
         }
         _ => {

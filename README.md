@@ -154,6 +154,17 @@ is true only when status clearly reports readiness; `codewalkerApiReadyForReplac
 `NullRpfAdapter`.
 See [T0_6_1_CODEWALKER_API_READINESS.md](docs/T0_6_1_CODEWALKER_API_READINESS.md) for details.
 
+### Phase T0.6.2 — CodeWalker Search + Target Resolution Plan
+`codewalker-resolve-targets` reads the RPF entry manifest and maps each entry to
+CodeWalker search results via read-only `GET /api/search-file?filename=<name>`. A
+target resolves only on a unique exact or unique suffix match; filename-only and
+ambiguous matches stay unresolved. **GET-only**: it never issues a POST and never
+calls replace/import/reload-services/set-config or any mutation endpoint, never
+executes CodeWalker, and never opens or modifies an RPF archive. Offline yields
+all targets unresolved (not an error). The active adapter stays `NullRpfAdapter`;
+`canWriteArchive` and `writerAllowed` stay false.
+See [T0_6_2_CODEWALKER_SEARCH_RESOLUTION.md](docs/T0_6_2_CODEWALKER_SEARCH_RESOLUTION.md) for details.
+
 ## What this project must not do
 
 This scanner should not:
