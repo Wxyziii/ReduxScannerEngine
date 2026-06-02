@@ -164,6 +164,7 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
             || m.id == "T0.6.4"
             || m.id == "T0.6.5"
             || m.id == "T0.6.6"
+            || m.id == "T0.6.7"
         {
             m.implemented = true;
         }
@@ -222,6 +223,8 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         codewalker_replace_apply_implemented: true,
         // Post-write verification + rollback planning shipped (T0.6.6).
         codewalker_post_write_verification_implemented: true,
+        // Controlled rollback restore shipped (T0.6.7): copied test archives only.
+        codewalker_rollback_restore_implemented: true,
         codewalker_execution_implemented: false,
         codewalker_write_allowed_now: false,
         writer_allowed_now: false,

@@ -1131,3 +1131,137 @@ pub struct CodeWalkerPostWriteVerifyReport {
     pub blocked_items: Vec<CodeWalkerPostWriteBlockedItem>,
     pub summary: CodeWalkerPostWriteSummary,
 }
+
+// ── T0.6.7 controlled rollback restore from backup ───────────────────────────
+
+/// Overall outcome of a rollback-restore pass.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerRollbackRestoreStatus {
+    /// Every gate passed and the verified backup was copied over the target.
+    Restored,
+    /// A strict gate failed; the target was NOT modified.
+    Blocked,
+    /// A required input report/target was unusable; the target was NOT modified.
+    InvalidInput,
+    /// Gates passed but the copy/verify step failed; target state is reported.
+    RestoreFailed,
+}
+
+/// A rollback-restore safety gate.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerRollbackRestoreSafetyGate {
+    pub name: String,
+    pub passed: bool,
+    pub severity: CodeWalkerApiSeverity,
+    pub message: String,
+}
+
+/// A reason the restore was blocked.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerRollbackRestoreBlockedItem {
+    pub component: String,
+    pub reason: String,
+    pub block_type: String,
+}
+
+/// A non-fatal advisory observed while restoring.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerRollbackRestoreWarning {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerRollbackRestoreSummary {
+    pub total_gates: usize,
+    pub passed_gate_count: usize,
+    pub blocking_gate_count: usize,
+    pub warning_count: usize,
+    pub blocked_count: usize,
+    pub rollback_executed: bool,
+    pub restored_target_matches_backup: Option<bool>,
+    pub modifies_archive: bool,
+}
+
+/// Controlled rollback restore: copies a verified backup file back over a COPIED
+/// TEST target archive — the first command that may modify a target archive on
+/// disk. It runs only when the T0.6.6 post-write verification report has a ready
+/// rollback plan, the T0.5.1 backup report is hash-verified and safe, the
+/// recomputed backup hash matches the report, the target is a copied test archive
+/// (never an original game path), `--execute-rollback` is given, and the exact
+/// confirmation phrase matches. It never calls CodeWalker, never sends an HTTP
+/// request, never uses POST, never executes an external tool, never parses RPF
+/// internals, and never creates a backup. Global `writerAllowed` stays `false`
+/// and the active adapter stays `NullRpfAdapter`; the only mutation is the gated
+/// `copy_backup_over_target`. On any blocking gate failure the target is NOT
+/// modified.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerRollbackRestoreReport {
+    pub status: CodeWalkerRollbackRestoreStatus,
+
+    // ── Target / inputs ─────────────────────────────────────────────────────
+    pub target_rpf: String,
+    pub backup_file_path: Option<String>,
+    pub post_write_verify_report_path: String,
+    pub backup_report_path: String,
+
+    // ── Authorization ───────────────────────────────────────────────────────
+    pub execute_rollback_requested: bool,
+    pub confirmation_phrase_provided: bool,
+    pub confirmation_phrase_matched: bool,
+    pub expected_confirmation_phrase: String,
+
+    // ── Target facts ────────────────────────────────────────────────────────
+    pub target_rpf_exists: bool,
+    pub target_rpf_extension_valid: bool,
+    pub target_classification: String,
+    pub copied_test_archive_confirmed: bool,
+    pub target_not_original_game_archive: bool,
+
+    // ── Backup facts ────────────────────────────────────────────────────────
+    pub backup_file_exists: bool,
+    pub backup_hash_verified: bool,
+    pub backup_hash_matches_report: bool,
+    pub backup_safe_for_future_write: bool,
+    pub backup_target_matches_target: Option<bool>,
+    pub backup_sha256: Option<String>,
+
+    // ── Rollback plan facts (from T0.6.6) ───────────────────────────────────
+    pub rollback_plan_ready: bool,
+    pub rollback_available: bool,
+
+    // ── Execution ───────────────────────────────────────────────────────────
+    pub rollback_execution_allowed: bool,
+    pub rollback_executed: bool,
+    pub target_sha256_before: Option<String>,
+    pub target_sha256_after: Option<String>,
+    pub restored_target_matches_backup: Option<bool>,
+    /// Always `copy_backup_over_target`.
+    pub restore_method: String,
+
+    // ── Safety mirror ───────────────────────────────────────────────────────
+    pub http_requests_sent: bool,
+    pub post_requests_sent: bool,
+    pub replace_endpoint_called: bool,
+    pub import_endpoint_called: bool,
+    pub reload_services_called: bool,
+    pub set_config_called: bool,
+    pub external_tool_executed: bool,
+    pub native_parser_used: bool,
+    pub native_writer_used: bool,
+    pub modifies_archive: bool,
+    pub writer_allowed: bool,
+    pub active_adapter_name: String,
+    pub null_adapter_active: bool,
+
+    pub gates: Vec<CodeWalkerRollbackRestoreSafetyGate>,
+    pub warnings: Vec<CodeWalkerRollbackRestoreWarning>,
+    pub blocked_items: Vec<CodeWalkerRollbackRestoreBlockedItem>,
+    pub summary: CodeWalkerRollbackRestoreSummary,
+}

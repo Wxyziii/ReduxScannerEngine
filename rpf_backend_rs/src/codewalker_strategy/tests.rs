@@ -52,6 +52,7 @@ mod tests {
         assert!(r.codewalker_execution_gate_implemented);
         assert!(r.codewalker_replace_apply_implemented);
         assert!(r.codewalker_post_write_verification_implemented);
+        assert!(r.codewalker_rollback_restore_implemented);
     }
 
     #[test]
@@ -104,19 +105,10 @@ mod tests {
         ] {
             assert!(ids.contains(&expected), "missing milestone {}", expected);
         }
-        // T0.6.0–T0.6.6 shipped; T0.6.7+ still future.
+        // T0.6.0–T0.6.7 shipped.
         for m in r.milestone_plan.iter() {
-            if m.id == "T0.6.0"
-                || m.id == "T0.6.1"
-                || m.id == "T0.6.2"
-                || m.id == "T0.6.3"
-                || m.id == "T0.6.4"
-                || m.id == "T0.6.5"
-                || m.id == "T0.6.6"
-            {
+            if m.id.starts_with("T0.6.") {
                 assert!(m.implemented, "{} should be implemented", m.id);
-            } else {
-                assert!(!m.implemented, "{} should not be implemented", m.id);
             }
         }
     }
@@ -141,6 +133,7 @@ mod tests {
         assert_eq!(v["codewalkerExecutionGateImplemented"], true);
         assert_eq!(v["codewalkerReplaceApplyImplemented"], true);
         assert_eq!(v["codewalkerPostWriteVerificationImplemented"], true);
+        assert_eq!(v["codewalkerRollbackRestoreImplemented"], true);
         assert_eq!(v["codewalkerExecutionImplemented"], false);
         assert_eq!(v["externalToolExecutionAllowed"], false);
         assert_eq!(v["plannedBaseUrlDefault"], "http://localhost:5555");

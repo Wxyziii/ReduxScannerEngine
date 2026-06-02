@@ -221,6 +221,20 @@ false; the active adapter stays `NullRpfAdapter` and global `writerAllowed` stay
 false.
 See [T0_6_6_CODEWALKER_POST_WRITE_VERIFY.md](docs/T0_6_6_CODEWALKER_POST_WRITE_VERIFY.md) for details.
 
+### Phase T0.6.7 — CodeWalker Rollback Restore From Backup
+`codewalker-rollback-restore` copies a **verified backup** back over a **copied
+test** target archive — the first command that may modify a target archive on
+disk, and heavily gated. It runs only when the post-write verification report has a
+ready rollback plan, the backup report is hash-verified and safe, the **recomputed
+backup hash matches** the report, the target is a copied test archive (**original
+game paths are blocked**), `--execute-rollback` is given, and `--confirm` matches
+exactly. It performs **no CodeWalker calls**, sends **no HTTP request**, never uses
+POST, never executes an external tool, never parses RPF internals, and never
+creates a backup. On any blocking gate failure the target is **not modified**.
+Global `writerAllowed` stays false and the active adapter stays `NullRpfAdapter`;
+the only mutation is the gated `copy_backup_over_target`.
+See [T0_6_7_CODEWALKER_ROLLBACK_RESTORE.md](docs/T0_6_7_CODEWALKER_ROLLBACK_RESTORE.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

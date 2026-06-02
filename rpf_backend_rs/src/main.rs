@@ -351,7 +351,9 @@ struct Args {
     target_is_test_copy: bool,
     execution_gate_report: Option<PathBuf>,
     replace_apply_report: Option<PathBuf>,
+    post_write_verify_report: Option<PathBuf>,
     execute: bool,
+    execute_rollback: bool,
     confirm: Option<String>,
     base_url: Option<String>,
     changed_files: Vec<String>,
@@ -540,6 +542,18 @@ Commands:
                 request, never uses POST, never executes an external tool, never parses
                 RPF internals. rollbackExecuted and rollbackExecutionAllowed are always
                 false; the active adapter stays NullRpfAdapter. Exits 0.
+  codewalker-rollback-restore --target-rpf <path> --post-write-verify-report <path>
+                --backup-report <path> --execute-rollback --confirm "<phrase>" [--out <out.json>]
+                Restore a COPIED TEST target archive from its verified backup by
+                copying the backup file over it — only when the post-write
+                verification report has a ready rollback plan, the backup report is
+                hash-verified and safe, the recomputed backup hash matches, the target
+                is a copied test archive (never an original game path), --execute-
+                rollback is given, and --confirm matches exactly. Never calls
+                CodeWalker, never sends an HTTP request, never uses POST, never
+                executes an external tool, never parses RPF internals, never creates a
+                backup. On any blocking gate failure the target is NOT modified. Global
+                writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -647,7 +661,9 @@ fn parse_args() -> Result<Args> {
         target_is_test_copy: false,
         execution_gate_report: None,
         replace_apply_report: None,
+        post_write_verify_report: None,
         execute: false,
+        execute_rollback: false,
         confirm: None,
         base_url: None,
         changed_files: Vec::new(),
@@ -827,7 +843,14 @@ fn parse_args() -> Result<Args> {
                         .context("missing value for --replace-apply-report")?,
                 ))
             }
+            "--post-write-verify-report" => {
+                args.post_write_verify_report = Some(PathBuf::from(
+                    it.next()
+                        .context("missing value for --post-write-verify-report")?,
+                ))
+            }
             "--execute" => args.execute = true,
+            "--execute-rollback" => args.execute_rollback = true,
             "--confirm" => args.confirm = Some(it.next().context("missing value for --confirm")?),
             "--base-url" => {
                 args.base_url = Some(it.next().context("missing value for --base-url")?)
@@ -11351,6 +11374,39 @@ fn main() -> Result<()> {
                     &dry_replace_plan,
                 )
                 .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-rollback-restore" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("codewalker-rollback-restore requires --target-rpf")?;
+            let post_write_verify_report = args
+                .post_write_verify_report
+                .clone()
+                .context("codewalker-rollback-restore requires --post-write-verify-report")?;
+            let backup_report = args
+                .backup_report
+                .clone()
+                .context("codewalker-rollback-restore requires --backup-report")?;
+            // Controlled rollback restore. Copies the verified backup file back over
+            // a COPIED TEST target archive ONLY when the post-write verification
+            // report has a ready rollback plan, the backup report is hash-verified
+            // and safe, the recomputed backup hash matches, the target is a copied
+            // test archive (never an original game path), --execute-rollback is
+            // given, and --confirm matches exactly. Never calls CodeWalker, never
+            // sends an HTTP request, never uses POST, never executes an external
+            // tool, never parses RPF internals, never creates a backup. Global
+            // writerAllowed stays false; NullRpfAdapter stays active. On any
+            // blocking gate failure the target is NOT modified. Exits 0.
+            let report = codewalker_api::rollback_restore::execute_codewalker_rollback_restore(
+                &target_rpf,
+                &post_write_verify_report,
+                &backup_report,
+                args.execute_rollback,
+                args.confirm.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;
         }
         _ => {
