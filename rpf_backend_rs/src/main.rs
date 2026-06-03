@@ -350,6 +350,7 @@ struct Args {
     dry_replace_plan: Option<PathBuf>,
     target_is_test_copy: bool,
     execution_gate_report: Option<PathBuf>,
+    compatibility_probe_report: Option<PathBuf>,
     replace_apply_report: Option<PathBuf>,
     post_write_verify_report: Option<PathBuf>,
     execute: bool,
@@ -587,6 +588,22 @@ Commands:
                 statuses and response-shape samples (body sample capped at 2048 chars).
                 An offline server yields a valid offline report (exits 0).
                 writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
+  codewalker-test-run --target-rpf <path> --project-dir <path> --backup-report <path>
+                --readiness-report <path> --entry-manifest-report <path>
+                --resolve-report <path> --dry-replace-plan <path>
+                --execution-gate-report <path> [--compatibility-probe-report <path>]
+                [--base-url <url>] [--execute] [--confirm "<phrase>"] [--out <out.json>]
+                Real copied-archive test-run COORDINATOR. Validates every required
+                input and produces a single run report for a full CodeWalker copied-
+                test replace cycle. Plan mode is the default and safe: it calls
+                nothing, sends NO HTTP request, executes no external tool, parses no
+                RPF internals, and NEVER modifies the target. Execute mode requires
+                --execute plus the exact confirm phrase and every eligibility gate;
+                only then does it invoke the existing replace apply (copied test
+                archives only) followed by post-write verification. Copied test
+                archives only — original game paths are blocked. Never rolls back
+                automatically, never executes CodeWalker as a process. Global
+                writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -693,6 +710,7 @@ fn parse_args() -> Result<Args> {
         dry_replace_plan: None,
         target_is_test_copy: false,
         execution_gate_report: None,
+        compatibility_probe_report: None,
         replace_apply_report: None,
         post_write_verify_report: None,
         execute: false,
@@ -872,6 +890,12 @@ fn parse_args() -> Result<Args> {
                 args.execution_gate_report = Some(PathBuf::from(
                     it.next()
                         .context("missing value for --execution-gate-report")?,
+                ))
+            }
+            "--compatibility-probe-report" => {
+                args.compatibility_probe_report = Some(PathBuf::from(
+                    it.next()
+                        .context("missing value for --compatibility-probe-report")?,
                 ))
             }
             "--replace-apply-report" => {
@@ -11498,6 +11522,65 @@ fn main() -> Result<()> {
                 args.base_url.as_deref(),
                 args.search_filename.as_deref(),
                 args.check_replace_options,
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-test-run" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("codewalker-test-run requires --target-rpf")?;
+            let project_dir = args
+                .project_dir
+                .clone()
+                .context("codewalker-test-run requires --project-dir")?;
+            let backup_report = args
+                .backup_report
+                .clone()
+                .context("codewalker-test-run requires --backup-report")?;
+            let readiness_report = args
+                .readiness_report
+                .clone()
+                .context("codewalker-test-run requires --readiness-report")?;
+            let entry_manifest_report = args
+                .entry_manifest_report
+                .clone()
+                .context("codewalker-test-run requires --entry-manifest-report")?;
+            let resolve_report = args
+                .resolve_report
+                .clone()
+                .context("codewalker-test-run requires --resolve-report")?;
+            let dry_replace_plan = args
+                .dry_replace_plan
+                .clone()
+                .context("codewalker-test-run requires --dry-replace-plan")?;
+            let execution_gate_report = args
+                .execution_gate_report
+                .clone()
+                .context("codewalker-test-run requires --execution-gate-report")?;
+            // Real copied-archive test-run COORDINATOR. Plan mode (default) only
+            // validates every required input and builds a planned step sequence;
+            // it calls nothing, sends NO HTTP request, executes no external tool,
+            // parses no RPF internals, and NEVER modifies the target. Execute mode
+            // requires --execute plus the exact confirm phrase and every eligibility
+            // gate; only then does it invoke the existing replace apply (copied test
+            // archives only) and post-write verification. Never targets an original
+            // game archive, never rolls back automatically, never executes CodeWalker
+            // as a process. Global writerAllowed stays false; NullRpfAdapter active.
+            let report = codewalker_api::test_run::build_or_run_codewalker_copied_archive_test(
+                &target_rpf,
+                args.base_url.as_deref(),
+                &project_dir,
+                &backup_report,
+                &readiness_report,
+                &entry_manifest_report,
+                &resolve_report,
+                &dry_replace_plan,
+                &execution_gate_report,
+                args.compatibility_probe_report.as_deref(),
+                args.execute,
+                args.confirm.as_deref(),
             )
             .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;

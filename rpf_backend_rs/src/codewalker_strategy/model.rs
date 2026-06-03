@@ -92,6 +92,7 @@ pub struct CodeWalkerStrategyReport {
     pub codewalker_rollback_restore_implemented: bool,
     pub codewalker_manual_harness_implemented: bool,
     pub codewalker_compatibility_probe_implemented: bool,
+    pub codewalker_copied_archive_test_run_implemented: bool,
     pub codewalker_execution_implemented: bool,
     pub codewalker_write_allowed_now: bool,
 

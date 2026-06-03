@@ -266,6 +266,20 @@ offline server yields a valid offline report. `writerAllowed` stays false and th
 active adapter stays `NullRpfAdapter`.
 See [T0_6_9_CODEWALKER_COMPAT_PROBE.md](docs/T0_6_9_CODEWALKER_COMPAT_PROBE.md) for details.
 
+### Phase T0.6.10 — CodeWalker Real Copied Archive Test Run Coordinator
+`codewalker-test-run` is a **plan-first coordinator** for a real copied `update.rpf`
+test. It validates every required input (backup, readiness, entry manifest, resolve,
+dry replace plan, execution gate, optional compatibility probe) and produces a single
+run report for a full CodeWalker copied-test replace cycle. **Plan mode is the default
+and safe**: it calls nothing, sends no HTTP request, executes no external tool, parses
+no RPF internals, and never modifies the target. **Execute mode is gated** behind
+`--execute` plus the exact confirm phrase and every eligibility gate; only then does it
+invoke the existing replace apply (copied test archives only) followed by post-write
+verification. Original game archives are blocked, rollback is never automatic, and
+CodeWalker is never executed as a process. Global `writerAllowed` stays false and the
+active adapter stays `NullRpfAdapter`.
+See [T0_6_10_CODEWALKER_TEST_RUN.md](docs/T0_6_10_CODEWALKER_TEST_RUN.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

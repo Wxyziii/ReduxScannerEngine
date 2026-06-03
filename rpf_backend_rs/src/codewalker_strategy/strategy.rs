@@ -162,6 +162,12 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
             "CodeWalker Live Compatibility Probe",
             "Safely check CodeWalker.API endpoint shapes/availability; no replace POST, no mutation.",
         ),
+        milestone(
+            "T0.6.10",
+            "Real Copied Archive Test Run Coordinator",
+            "Plan-first coordinator for a full copied-test replace cycle; execute mode gated, \
+             no original archives.",
+        ),
     ];
 
     // T0.6.0 (detection) and T0.6.1 (readiness) have shipped.
@@ -177,6 +183,7 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
             || m.id == "T0.6.7"
             || m.id == "T0.6.8"
             || m.id == "T0.6.9"
+            || m.id == "T0.6.10"
         {
             m.implemented = true;
         }
@@ -243,6 +250,9 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         // Live compatibility probe shipped (T0.6.9): safe endpoint shape/availability
         // checks only; no replace POST, no archive mutation.
         codewalker_compatibility_probe_implemented: true,
+        // Real copied-archive test-run coordinator shipped (T0.6.10): plan-first,
+        // execute mode gated, original game paths blocked, no auto rollback.
+        codewalker_copied_archive_test_run_implemented: true,
         codewalker_execution_implemented: false,
         codewalker_write_allowed_now: false,
         writer_allowed_now: false,

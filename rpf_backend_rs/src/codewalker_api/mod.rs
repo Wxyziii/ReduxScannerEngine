@@ -9,6 +9,7 @@ pub mod readiness;
 pub mod replace_apply;
 pub mod rollback_restore;
 pub mod search;
+pub mod test_run;
 
 #[cfg(test)]
 mod compat_probe_tests;
@@ -28,5 +29,7 @@ mod replace_apply_tests;
 mod rollback_restore_tests;
 #[cfg(test)]
 mod search_tests;
+#[cfg(test)]
+mod test_run_tests;
 #[cfg(test)]
 mod tests;

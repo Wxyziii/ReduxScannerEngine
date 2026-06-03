@@ -1603,3 +1603,197 @@ pub struct CodeWalkerCompatibilityProbeReport {
     pub blocked_items: Vec<CodeWalkerCompatibilityBlockedItem>,
     pub summary: CodeWalkerCompatibilitySummary,
 }
+
+// ── T0.6.10: Real copied-archive test-run coordinator ───────────────────────
+
+/// The mode the copied-archive test-run coordinator ran in.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerTestRunMode {
+    /// Default. Validate inputs and produce a planned step sequence only. Calls
+    /// nothing, sends no HTTP request, modifies no archive.
+    PlanOnly,
+    /// Explicitly requested execution: when every gate passes, invoke the existing
+    /// replace apply on the copied test archive, then post-write verification.
+    ExecuteReplace,
+    /// Reserved: verify an already-applied run without re-running the replace.
+    VerifyOnly,
+}
+
+/// Overall outcome of a copied-archive test-run.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerTestRunStatus {
+    /// Plan mode: all eligibility gates passed; ready for execute mode.
+    PlannedReady,
+    /// Plan mode: at least one eligibility gate is not yet satisfied.
+    PlannedNotReady,
+    /// Execute was requested but a blocking gate failed; nothing was executed.
+    Blocked,
+    /// A required input/target was unusable; the run could not be coordinated.
+    InvalidInput,
+    /// Execute ran: replace apply succeeded and post-write verification ran.
+    Executed,
+    /// Execute ran but the replace apply did not succeed.
+    ExecuteFailed,
+}
+
+/// One step in the full copied-test replace cycle.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestRunStep {
+    pub index: usize,
+    pub command_name: String,
+    pub title: String,
+    pub description: String,
+    /// True when this step would mutate the copied test archive.
+    pub mutates_archive: bool,
+    /// True when this step was actually executed in this run.
+    pub executed: bool,
+    /// True when this step was planned but deliberately not executed.
+    pub skipped: bool,
+    pub note: Option<String>,
+}
+
+/// Load/validation status of one input report the coordinator reads.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestRunInputStatus {
+    pub name: String,
+    pub path: Option<String>,
+    /// True when this input is mandatory for the coordinator.
+    pub required: bool,
+    pub provided: bool,
+    pub exists: bool,
+    /// True when the file existed AND parsed as JSON.
+    pub loaded: bool,
+}
+
+/// A test-run safety gate.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestRunSafetyGate {
+    pub name: String,
+    pub passed: bool,
+    pub severity: CodeWalkerApiSeverity,
+    pub message: String,
+}
+
+/// A reason the coordinator refused or limited itself.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestRunBlockedItem {
+    pub component: String,
+    pub reason: String,
+    pub block_type: String,
+}
+
+/// A non-fatal advisory.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestRunWarning {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestRunSummary {
+    pub total_gates: usize,
+    pub passed_gate_count: usize,
+    pub blocking_gate_count: usize,
+    pub warning_count: usize,
+    pub blocked_count: usize,
+    pub planned_step_count: usize,
+    pub executed_step_count: usize,
+    pub skipped_step_count: usize,
+    /// True when all eligibility gates pass (execute mode would be allowed).
+    pub ready_for_execute: bool,
+    pub modifies_archive: bool,
+    pub execution_requested: bool,
+}
+
+/// Real copied-archive test-run coordinator (T0.6.10).
+///
+/// Validates every required input and produces a single run report for a full
+/// CodeWalker copied-test replace cycle. Plan mode is the default and is fully
+/// safe: it calls nothing, sends NO HTTP request, executes no external tool,
+/// parses no RPF internals, and never modifies the target. Execute mode requires
+/// the exact confirmation phrase and every eligibility gate to pass; only then does
+/// it invoke the existing replace apply (copied test archives only) and post-write
+/// verification. It NEVER targets an original game archive, never rolls back
+/// automatically, never executes CodeWalker as a process. Global `writer_allowed`
+/// stays `false` and the active adapter stays `NullRpfAdapter`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestRunReport {
+    pub status: CodeWalkerTestRunStatus,
+    pub mode: CodeWalkerTestRunMode,
+
+    // ── Target ──────────────────────────────────────────────────────────────
+    pub target_rpf: String,
+    pub target_rpf_exists: bool,
+    pub target_rpf_extension_valid: bool,
+    pub target_classification: CodeWalkerTargetArchiveClassification,
+    pub target_is_test_copy: bool,
+    pub original_game_path_blocked: bool,
+    pub base_url: String,
+    pub project_dir: String,
+
+    // ── Input report paths ──────────────────────────────────────────────────
+    pub backup_report_path: String,
+    pub readiness_report_path: String,
+    pub entry_manifest_report_path: String,
+    pub resolve_report_path: String,
+    pub dry_replace_plan_path: String,
+    pub execution_gate_report_path: String,
+    pub compatibility_probe_report_path: Option<String>,
+    /// Written only when execute mode actually invoked replace apply.
+    pub replace_apply_report_path: Option<String>,
+    /// Written only when execute mode actually invoked post-write verification.
+    pub post_write_verify_report_path: Option<String>,
+
+    pub inputs: Vec<CodeWalkerTestRunInputStatus>,
+
+    // ── Plan / execution trace ──────────────────────────────────────────────
+    pub planned_steps: Vec<CodeWalkerTestRunStep>,
+    pub executed_steps: Vec<String>,
+    pub skipped_steps: Vec<String>,
+
+    // ── Authorization ───────────────────────────────────────────────────────
+    pub execution_requested: bool,
+    pub confirmation_phrase_provided: bool,
+    pub confirmation_phrase_matched: bool,
+    pub expected_confirmation_phrase: String,
+
+    // ── Eligibility (derived from the input reports) ────────────────────────
+    pub execution_gate_eligible: bool,
+    pub copied_test_archive_confirmed: bool,
+    pub dry_replace_plan_has_planned_requests: bool,
+    pub compatibility_probe_blocking: bool,
+    pub ready_for_execute: bool,
+
+    // ── What actually happened ──────────────────────────────────────────────
+    pub codewalker_replace_apply_invoked: bool,
+    pub post_write_verify_invoked: bool,
+    /// Always `false` — the coordinator never rolls back automatically.
+    pub rollback_restore_invoked: bool,
+
+    // ── Hash audit ──────────────────────────────────────────────────────────
+    pub target_sha256_before: Option<String>,
+    pub target_sha256_after: Option<String>,
+    pub target_hash_changed: CodeWalkerReplaceTargetHashChange,
+
+    // ── Safety mirror ───────────────────────────────────────────────────────
+    pub modifies_archive: bool,
+    pub writer_allowed_global: bool,
+    pub null_adapter_active: bool,
+    pub native_parser_used: bool,
+    pub external_tool_executed: bool,
+    pub active_adapter_name: String,
+
+    pub gates: Vec<CodeWalkerTestRunSafetyGate>,
+    pub warnings: Vec<CodeWalkerTestRunWarning>,
+    pub blocked_items: Vec<CodeWalkerTestRunBlockedItem>,
+    pub summary: CodeWalkerTestRunSummary,
+}
