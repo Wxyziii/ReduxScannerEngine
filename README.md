@@ -30,6 +30,256 @@ It can:
   - sky/timecycle
   - kill effect
 
+### Phase T0.3 — XML/DAT Static Validators
+Built-in read-only validators for XML, DAT, and scanner scope.
+See [T0_3_STATIC_VALIDATORS.md](docs/T0_3_STATIC_VALIDATORS.md) for details.
+
+### Phase T0.4.1 — Deterministic Editor Contract + Dry-Run Framework
+Safety framework for future file editors.
+See [T0_4_1_EDITOR_DRY_RUN_FRAMEWORK.md](docs/T0_4_1_EDITOR_DRY_RUN_FRAMEWORK.md) for details.
+
+### Phase T0.4.6 — Patch Bundle Export
+Packages patched staged files plus their reports into a portable bundle folder.
+It never modifies the source workspace, the staged files, or any RPF archive.
+See [T0_4_6_PATCH_BUNDLE_EXPORT.md](docs/T0_4_6_PATCH_BUNDLE_EXPORT.md) for details.
+
+### Phase T0.5.0 — RPF Writer Planning + Safety Gate Design
+Writer **planning and safety-gate design only** — this is **not** real archive editing.
+`plan-rpf-write` reads an exported bundle and emits a structured write plan with
+safety gates (backup, restore, hash verification, manual confirmation). It never
+opens or modifies any RPF archive; `safeToWrite` is always false and real RPF
+writing is intentionally not implemented.
+See [T0_5_0_RPF_WRITER_PLANNING.md](docs/T0_5_0_RPF_WRITER_PLANNING.md) for details.
+
+### Phase T0.5.1 — RPF Backup + Hash Verification Preflight
+`backup-rpf` copies a target `.rpf` into a backup directory and verifies the copy
+by SHA-256. It is **read/copy only** — the original target archive is never
+modified, and real RPF writing is still not implemented. A hash-verified backup is
+a prerequisite for any future controlled write.
+See [T0_5_1_RPF_BACKUP_PREFLIGHT.md](docs/T0_5_1_RPF_BACKUP_PREFLIGHT.md) for details.
+
+### Phase T0.5.2 — RPF Archive Probe + Tool Capability Detection
+`probe-rpf` reads a target `.rpf` file's metadata and SHA-256 hash and reports
+informational external-tool detection. It is **read-only** — it does not parse RPF
+internals or modify the archive, and `canParseRpf` / `canWriteRpf` /
+`nativeWriterImplemented` are all false.
+See [T0_5_2_RPF_PROBE.md](docs/T0_5_2_RPF_PROBE.md) for details.
+
+### Phase T0.5.3 — Clean vs Modded RPF Hash/Metadata Compare
+`compare-rpf` compares two `.rpf` archives (clean vs modded) by external file
+metadata and SHA-256 only. It is **read-only** — neither archive is parsed or
+modified. `archivesDiffer` is true when size or hash differs, and
+`canCompareInternals` / `nativeParserImplemented` are always false. Useful for
+proving whether two archives differ before any future deeper inspection.
+See [T0_5_3_RPF_COMPARE.md](docs/T0_5_3_RPF_COMPARE.md) for details.
+
+### Phase T0.5.4 — RPF Adapter Contract
+`rpf-adapter-info` reports the RPF adapter contract and capabilities. The active
+adapter is `NullRpfAdapter` — **safe-mode only**: it never opens, parses, or
+modifies an archive, and `canWriteArchive` / `canReplaceFiles` / `nativeParser` /
+`nativeWriter` are all false. All list/extract/replace/write operations are
+blocked as `native_rpf_adapter_not_implemented`. This milestone only defines the
+trait, capability model, and safety behavior for future native or external-tool
+adapters; no real parsing or writing is implemented.
+See [T0_5_4_RPF_ADAPTER_CONTRACT.md](docs/T0_5_4_RPF_ADAPTER_CONTRACT.md) for details.
+
+### Phase T0.5.5 — External Tool Adapter Planning
+`rpf-external-tools` plans future external RPF tooling support
+(OpenIV/CodeWalker/7z/powershell/cmd). Detection is **informational only** — a
+best-effort PATH lookup; no tool is ever executed, no external archive mutation
+occurs, and there is no automatic tool execution. `canWriteArchive` and
+`canUseExternalToolsAutomatically` are always false and `safeModeOnly` is true.
+`NullRpfAdapter` remains the active adapter; `rpf-adapter-info` embeds this plan
+under `externalToolPlan` for reference.
+See [T0_5_5_EXTERNAL_TOOL_ADAPTER_PLANNING.md](docs/T0_5_5_EXTERNAL_TOOL_ADAPTER_PLANNING.md) for details.
+
+### Phase T0.5.6 — Write Readiness Report
+`write-readiness` produces a unified, **read-only** pre-write decision report that
+combines the bundle, write plan, backup preflight, RPF probe, adapter
+capabilities, and external-tool planning into one object answering "is this bundle
+ready to write into this target RPF?". `readyToWrite` stays **false** until a real
+writer, native parser, and a trusted writing adapter exist. It never opens or
+modifies the target archive, never modifies the bundle, never creates backups, and
+never executes external tools.
+See [T0_5_6_WRITE_READINESS_REPORT.md](docs/T0_5_6_WRITE_READINESS_REPORT.md) for details.
+
+### Phase T0.5.7 — RPF Entry Manifest Schema
+`rpf-entry-manifest` produces a **read-only** bundle-to-archive-entry mapping: the
+future writer's input format. It walks an exported bundle's `files/` and records,
+for each file, the normalized archive-relative path, size, and SHA-256, with path
+safety validation and duplicate detection. It does not parse, open, or write any
+RPF archive and does not execute external tools; `readyForWrite` stays false until
+a controlled writer adapter exists.
+See [T0_5_7_RPF_ENTRY_MANIFEST_SCHEMA.md](docs/T0_5_7_RPF_ENTRY_MANIFEST_SCHEMA.md) for details.
+
+### Phase T0.5.8 — Writer Permission Token / Manual Confirmation Schema
+`writer-permission` models the **read-only** manual confirmation object required
+before any future controlled RPF write. It validates the bundle/target inputs,
+checks any provided readiness/entry-manifest/backup reports, and requires an exact
+confirmation phrase; when everything checks out it issues a planning permission
+token. The token never authorizes writing: `writerAllowed` is always false and the
+report still carries the writer/parser/adapter blockers. It never opens or modifies
+the target archive, never modifies the bundle, never creates backups, and never
+executes external tools. This will later become the final authorization gate before
+controlled writing.
+See [T0_5_8_WRITER_PERMISSION_TOKEN.md](docs/T0_5_8_WRITER_PERMISSION_TOKEN.md) for details.
+
+### Phase T0.5.9 — CodeWalker Writer Strategy Lock-In
+`codewalker-strategy` selects **CodeWalker.API** as the future writer route and
+records the planned T0.6.x path (detection → readiness → resolve → dry replace →
+copied-test-archive execution → verify/rollback) plus the required safety gates.
+Static and deterministic: it reads no files and causes **no archive mutation and
+no CodeWalker execution**. The active adapter stays `NullRpfAdapter` and
+`writerAllowedNow` remains false.
+See [T0_5_9_CODEWALKER_WRITER_STRATEGY.md](docs/T0_5_9_CODEWALKER_WRITER_STRATEGY.md) for details.
+
+### Phase T0.6.0 — CodeWalker.API Detection Adapter
+`codewalker-detect` performs safe, read-only detection of a local CodeWalker.API
+(default `http://localhost:5555`) via HTTP `GET /` and `GET /api/service-status`.
+It **never** calls replace/import/write or any mutation endpoint, never executes
+CodeWalker as a process, and never opens or modifies an RPF archive. An offline
+server yields `reachable: false` (exit `0`, not an error). The active adapter
+stays `NullRpfAdapter`; `canWriteArchive`, `replaceEndpointCalled`,
+`writeEndpointsCalled`, `modifiesArchive`, and `writerAllowed` are always false.
+See [T0_6_0_CODEWALKER_API_DETECTION.md](docs/T0_6_0_CODEWALKER_API_DETECTION.md) for details.
+
+### Phase T0.6.1 — CodeWalker.API Readiness Probe
+`codewalker-readiness` builds on `codewalker-detect` and adds a read-only service
+status readiness check (`GET /api/service-status`, tolerantly parsed for ready /
+GTA path / version info). **GET-only**: it never issues a POST and never calls
+replace/import/reload-services/set-config or any mutation endpoint, never executes
+CodeWalker, and never opens or modifies an RPF archive. `codewalkerApiReadyForSearch`
+is true only when status clearly reports readiness; `codewalkerApiReadyForReplace`,
+`canWriteArchive`, and `writerAllowed` stay false. The active adapter stays
+`NullRpfAdapter`.
+See [T0_6_1_CODEWALKER_API_READINESS.md](docs/T0_6_1_CODEWALKER_API_READINESS.md) for details.
+
+### Phase T0.6.2 — CodeWalker Search + Target Resolution Plan
+`codewalker-resolve-targets` reads the RPF entry manifest and maps each entry to
+CodeWalker search results via read-only `GET /api/search-file?filename=<name>`. A
+target resolves only on a unique exact or unique suffix match; filename-only and
+ambiguous matches stay unresolved. **GET-only**: it never issues a POST and never
+calls replace/import/reload-services/set-config or any mutation endpoint, never
+executes CodeWalker, and never opens or modifies an RPF archive. Offline yields
+all targets unresolved (not an error). The active adapter stays `NullRpfAdapter`;
+`canWriteArchive` and `writerAllowed` stay false.
+See [T0_6_2_CODEWALKER_SEARCH_RESOLUTION.md](docs/T0_6_2_CODEWALKER_SEARCH_RESOLUTION.md) for details.
+
+### Phase T0.6.3 — CodeWalker Dry Replace Plan
+`codewalker-dry-replace-plan` combines the exported bundle files, the RPF entry
+manifest, and the CodeWalker resolve report (plus an optional writer-permission
+report) into MODELLED `/api/replace-file` payloads describing exactly what a
+future writer would send. **Local read-only**: it reads only local report/bundle
+files and **sends no HTTP request of any kind** — it never uses POST, never calls
+`/api/replace-file`/`/api/import`/`/api/reload-services`/`/api/set-config` or any
+mutation endpoint, never executes CodeWalker or any external tool, and never opens
+or modifies an RPF archive. Item-level blockers (unresolved/ambiguous target,
+missing bundle file, hash mismatch) are reported without failing the whole report.
+`dryRunOnly` is true; the active adapter stays `NullRpfAdapter`; and
+`readyForExecution`, `writerAllowed`, and `codewalkerExecutionAllowed` stay false.
+See [T0_6_3_CODEWALKER_DRY_REPLACE_PLAN.md](docs/T0_6_3_CODEWALKER_DRY_REPLACE_PLAN.md) for details.
+
+### Phase T0.6.4 — CodeWalker Copied-Test-Archive Execution Gate
+`codewalker-execution-gate` is a **local read-only** gate for a future replace
+execution. It decides whether a future CodeWalker replace attempt against the
+target archive would even be **eligible** — and never executes anything. Only a
+**copied test archive** (confirmed via `--target-is-test-copy`, not an original
+game path) can be eligible; it **blocks original game install paths**. It reads
+the dry replace, permission, readiness, entry manifest, and backup reports and
+**sends no HTTP request of any kind** — never uses POST, never calls
+`/api/replace-file`/`/api/import`/`/api/reload-services`/`/api/set-config` or any
+mutation endpoint, never executes CodeWalker or any external tool, and never
+opens or modifies an RPF archive. `codewalkerExecutionEligible` may be true, but
+`codewalkerExecutionAllowedNow`, `codewalkerExecutionPerformed`, `writerAllowed`,
+and `modifiesArchive` stay false; the active adapter stays `NullRpfAdapter`.
+See [T0_6_4_CODEWALKER_EXECUTION_GATE.md](docs/T0_6_4_CODEWALKER_EXECUTION_GATE.md) for details.
+
+### Phase T0.6.5 — CodeWalker Replace Apply on Copied Test Archive
+`codewalker-replace-apply` is the **first scoped `/api/replace-file` executor**. It
+is the first command that may send a CodeWalker replace HTTP request, and it only
+does so when the T0.6.4 execution gate is **eligible**, the target is a **copied
+test archive**, `--execute` is given, and `--confirm` exactly matches the required
+phrase. **Copied test archives only** — never an original game archive (blocked
+upstream by the gate). It sends **only** `POST /api/replace-file`; it never calls
+import/reload-services/set-config or the search endpoint, never executes CodeWalker
+as a process or any external tool, never parses RPF internals, and never rolls
+back. On any blocking gate failure **no HTTP request is sent**. Global
+`writerAllowed` stays false and the active adapter stays `NullRpfAdapter`;
+execution is scoped to this gated command only.
+See [T0_6_5_CODEWALKER_REPLACE_APPLY.md](docs/T0_6_5_CODEWALKER_REPLACE_APPLY.md) for details.
+
+### Phase T0.6.6 — CodeWalker Post-Write Verification + Rollback Plan
+`codewalker-post-write-verify` is a **local read-only** check run after a replace
+apply. It computes the current target SHA-256 and compares it against the replace
+apply report's pre/post hashes and the backup report, classifies the outcome
+(no-change / failed / succeeded / suspicious), and builds a **rollback plan only**
+pointing at the verified backup. It performs **no restore** and **no archive
+mutation**: it never copies the backup over the target, never calls CodeWalker,
+never sends an HTTP request, never uses POST, never executes an external tool, and
+never parses RPF internals. `rollbackExecuted` and `rollbackExecutionAllowed` stay
+false; the active adapter stays `NullRpfAdapter` and global `writerAllowed` stays
+false.
+See [T0_6_6_CODEWALKER_POST_WRITE_VERIFY.md](docs/T0_6_6_CODEWALKER_POST_WRITE_VERIFY.md) for details.
+
+### Phase T0.6.7 — CodeWalker Rollback Restore From Backup
+`codewalker-rollback-restore` copies a **verified backup** back over a **copied
+test** target archive — the first command that may modify a target archive on
+disk, and heavily gated. It runs only when the post-write verification report has a
+ready rollback plan, the backup report is hash-verified and safe, the **recomputed
+backup hash matches** the report, the target is a copied test archive (**original
+game paths are blocked**), `--execute-rollback` is given, and `--confirm` matches
+exactly. It performs **no CodeWalker calls**, sends **no HTTP request**, never uses
+POST, never executes an external tool, never parses RPF internals, and never
+creates a backup. On any blocking gate failure the target is **not modified**.
+Global `writerAllowed` stays false and the active adapter stays `NullRpfAdapter`;
+the only mutation is the gated `copy_backup_over_target`.
+See [T0_6_7_CODEWALKER_ROLLBACK_RESTORE.md](docs/T0_6_7_CODEWALKER_ROLLBACK_RESTORE.md) for details.
+
+### Phase T0.6.8 — CodeWalker Manual Test Harness
+`codewalker-manual-harness` is the first **real copied-test-archive** test harness:
+a safe copied-test archive command checklist/script generator with **no archive
+mutation in plan mode** and original game paths **blocked**. It validates the copied
+test target, classifies it conservatively, and produces a structured plan plus a
+manual command checklist for the full CodeWalker copied-test flow (probe → backup →
+detect → readiness → entry manifest → resolve → dry replace → permission → execution
+gate → replace apply → post-write verify → optional rollback). With
+`--generate-script` it writes a safe PowerShell checklist under `.tmp` or
+`--project-dir`, with the mutating commands commented out behind placeholders. In
+plan/generate-script mode it **calls nothing**, sends **no HTTP request**, never uses
+POST, executes no external tool, parses no RPF internals, and **never modifies the
+target archive**. Even when `--execute` is given and `--confirm` matches, this
+milestone keeps `executionPerformed` false and performs no automatic full execution.
+See [T0_6_8_CODEWALKER_MANUAL_HARNESS.md](docs/T0_6_8_CODEWALKER_MANUAL_HARNESS.md) for details.
+
+### Phase T0.6.9 — CodeWalker Live Compatibility Probe
+`codewalker-compat-probe` performs **safe root/status/search/OPTIONS checks** against
+CodeWalker.API — **no replace POST, no archive mutation**. Before a real copied
+`update.rpf` replace, it checks whether the live CodeWalker.API instance supports the
+endpoint paths and request/response shapes the dry replace plan expects. It issues
+only `GET /`, `GET /api/service-status`, `GET /api/search-file?filename=<name>`
+(default `visualsettings.dat`), and — only with `--check-replace-options` — a single
+HTTP `OPTIONS /api/replace-file`. It **never** sends `POST /api/replace-file`, never
+calls import/reload-services/set-config, never executes CodeWalker, never parses RPF
+internals, and never modifies an archive. It records HTTP statuses and response-shape
+samples (body sample capped at 2048 chars) to discover real response shapes. An
+offline server yields a valid offline report. `writerAllowed` stays false and the
+active adapter stays `NullRpfAdapter`.
+See [T0_6_9_CODEWALKER_COMPAT_PROBE.md](docs/T0_6_9_CODEWALKER_COMPAT_PROBE.md) for details.
+
+### Phase T0.6.10 — CodeWalker Real Copied Archive Test Run Coordinator
+`codewalker-test-run` is a **plan-first coordinator** for a real copied `update.rpf`
+test. It validates every required input (backup, readiness, entry manifest, resolve,
+dry replace plan, execution gate, optional compatibility probe) and produces a single
+run report for a full CodeWalker copied-test replace cycle. **Plan mode is the default
+and safe**: it calls nothing, sends no HTTP request, executes no external tool, parses
+no RPF internals, and never modifies the target. **Execute mode is gated** behind
+`--execute` plus the exact confirm phrase and every eligibility gate; only then does it
+invoke the existing replace apply (copied test archives only) followed by post-write
+verification. Original game archives are blocked, rollback is never automatic, and
+CodeWalker is never executed as a process. Global `writerAllowed` stays false and the
+active adapter stays `NullRpfAdapter`.
+See [T0_6_10_CODEWALKER_TEST_RUN.md](docs/T0_6_10_CODEWALKER_TEST_RUN.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

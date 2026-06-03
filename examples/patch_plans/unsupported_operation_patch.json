@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "operations": [
+    {
+      "id": "u_001",
+      "phase": "first_patch",
+      "path": "common/data/visualsettings.dat",
+      "tool": "dat_named_key_editor",
+      "type": "dat_named_key_candidate",
+      "valueTarget": 1.0,
+      "intent": "Hypothesis: testing that unsupported op types are blocked by the apply engine.",
+      "validationRequired": ["dat_validator", "scanner_scope_validator"]
+    }
+  ],
+  "targetFiles": ["visualsettings.dat"]
+}

@@ -11,6 +11,25 @@ use tempfile::TempDir;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
+mod apply;
+mod codewalker_api;
+mod codewalker_strategy;
+mod diff;
+mod editors;
+mod export;
+mod inventory;
+mod rpf_adapter;
+mod rpf_backup;
+mod rpf_compare;
+mod rpf_entry_manifest;
+mod rpf_external;
+mod rpf_permission;
+mod rpf_probe;
+mod rpf_readiness;
+mod rpf_writer;
+mod staging;
+mod validators;
+
 const BACKEND_NAME: &str = "rpf_backend_rs";
 const BACKEND_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SCHEMA_VERSION: &str = "2.0";
@@ -313,6 +332,37 @@ struct Args {
     scanner_name: Option<String>,
     scanner_version: Option<String>,
     baseline: Option<PathBuf>,
+    file: Option<PathBuf>,
+    vmode: Option<String>,
+    patch_plan: Option<PathBuf>,
+    workspace: Option<PathBuf>,
+    stage_dir: Option<PathBuf>,
+    bundle_dir: Option<PathBuf>,
+    target_rpf: Option<PathBuf>,
+    backup_dir: Option<PathBuf>,
+    clean_rpf: Option<PathBuf>,
+    modded_rpf: Option<PathBuf>,
+    backup_report: Option<PathBuf>,
+    readiness_report: Option<PathBuf>,
+    entry_manifest_report: Option<PathBuf>,
+    resolve_report: Option<PathBuf>,
+    permission_report: Option<PathBuf>,
+    dry_replace_plan: Option<PathBuf>,
+    target_is_test_copy: bool,
+    execution_gate_report: Option<PathBuf>,
+    compatibility_probe_report: Option<PathBuf>,
+    replace_apply_report: Option<PathBuf>,
+    post_write_verify_report: Option<PathBuf>,
+    execute: bool,
+    execute_rollback: bool,
+    confirm: Option<String>,
+    base_url: Option<String>,
+    project_dir: Option<PathBuf>,
+    generate_script: bool,
+    search_filename: Option<String>,
+    check_replace_options: bool,
+    changed_files: Vec<String>,
+    operation_id: Option<String>,
 }
 
 fn usage() {
@@ -336,6 +386,225 @@ Commands:
   classify-rpf  --archive <unknown.rpf> --baseline <baseline_output_dir>
                 --keys <keys_dir> --out <classification.json>
                 [--depth 3]
+  validate-xml  --file <path> [--baseline <path>] [--vmode <mode>] [--out <out.json>]
+  validate-dat  --file <path> [--baseline <path>] [--vmode <mode>] [--out <out.json>]
+  validate-scope --patch-plan <path> --changed-files <comma_list_or_json_path> [--out <out.json>]
+  dry-run       --plan <path> [--workspace <path>] [--out <out.json>]
+                Simulate applying a PatchPlan without modifying any real files or RPF archives.
+                When --workspace is provided, target file existence is verified against the
+                extracted workspace directory. Exits 1 if safe_to_apply is false.
+  inventory     --workspace <path> [--out <out.json>]
+                Scan an extracted RPF workspace directory and report all files found.
+                Read-only. Never modifies any file.
+  stage         --plan <path> --workspace <path> --stage-dir <path> [--out <out.json>]
+                Copy validated PatchPlan target files from the workspace into a staging directory.
+                Does not modify the source workspace or any RPF archive.
+                Exits 1 if staging is blocked.
+  apply-stage   --plan <path> --stage-dir <path> [--out <out.json>]
+                Apply supported text PatchPlan operations to files inside the staging directory.
+                Only modifies staged copies — source workspace and RPF archives are never touched.
+                Supported op types: text_replace, text_append, text_prepend.
+                Exits 1 if any operation is blocked or fails.
+  diff-stage    --workspace <path> --stage-dir <path> [--out <out.json>]
+                Compare workspace files against their staged (patched) counterparts.
+                Read-only — neither workspace nor stage directory is modified.
+                Shows per-file change status, line counts, and preview hunks.
+  export-bundle --plan <path> --workspace <path> --stage-dir <path>
+                --bundle-dir <path> [--out <out.json>]
+                Package patched staged files and reports into a portable patch bundle.
+                Copies staged files into <bundle-dir>/files/ and writes bundle_manifest.json,
+                patch_plan.json, diff_report.json (and stage/apply reports if available).
+                Does not modify the source workspace, staged files, or any RPF archive.
+                Exits 1 if the export is blocked.
+  plan-rpf-write --bundle-dir <path> --target-rpf <path> [--out <out.json>]
+                Plan a future controlled RPF write from an exported bundle.
+                PLANNING ONLY: never opens or modifies the target archive.
+                safeToWrite is always false; real RPF writing is not implemented.
+  backup-rpf    --target-rpf <path> --backup-dir <path> [--out <out.json>]
+                Copy a target .rpf into a backup directory and verify it by SHA-256.
+                Read/copy only: the original target archive is never modified.
+                safeForFutureWrite is true only when the backup hash matches.
+  probe-rpf     --target-rpf <path> [--out <out.json>]
+                Read-only probe of a target .rpf: file metadata, SHA-256, and
+                informational external-tool detection. Never parses RPF internals
+                or modifies the archive. canParseRpf/canWriteRpf are always false.
+  compare-rpf   --clean-rpf <path> --modded-rpf <path> [--out <out.json>]
+                Compare two .rpf archives by external metadata and SHA-256 only.
+                Read-only: neither archive is parsed or modified. archivesDiffer
+                is true when size or hash differs. canCompareInternals and
+                nativeParserImplemented are always false.
+  rpf-adapter-info [--out <out.json>]
+                Report the current RPF adapter contract and capabilities.
+                The active adapter is NullRpfAdapter (safe-mode only): it never
+                opens, parses, or modifies an archive. canWriteArchive,
+                canReplaceFiles, nativeParser, and nativeWriter are always false.
+  rpf-external-tools [--out <out.json>]
+                Plan future external RPF tooling support (OpenIV/CodeWalker/7z/
+                powershell/cmd). Detection is informational PATH lookup only —
+                no tool is ever executed. canWriteArchive,
+                canUseExternalToolsAutomatically are always false; safeModeOnly true.
+  write-readiness --bundle-dir <path> --target-rpf <path>
+                [--backup-report <path>] [--out <out.json>]
+                Unified read-only pre-write readiness report combining bundle,
+                write plan, backup, probe, adapter, and external-tool components.
+                readyToWrite is always false; never opens or modifies the target
+                archive, never modifies the bundle, never creates backups, and
+                never executes external tools.
+  rpf-entry-manifest --bundle-dir <path> [--target-rpf <path>] [--out <out.json>]
+                Build a future-writer entry manifest mapping exported bundle files
+                to archive-relative paths (size + SHA-256, path safety, duplicate
+                detection). Read-only: never parses/opens/writes the target RPF and
+                never executes external tools. readyForWrite is always false.
+  writer-permission --bundle-dir <path> --target-rpf <path>
+                [--readiness-report <path>] [--entry-manifest-report <path>]
+                [--backup-report <path>] --confirm <phrase> [--out <out.json>]
+                Model the manual confirmation / permission token required before any
+                future controlled RPF write. Read-only: validates inputs and the
+                exact confirmation phrase, then may issue a planning token. The
+                token never authorizes writing — writerAllowed is always false and
+                blocking items still include writer/parser/adapter blockers. Never
+                opens or modifies the target archive, never modifies the bundle,
+                never creates backups, and never executes external tools.
+  codewalker-strategy [--out <out.json>]
+                Report the locked future writer route (CodeWalker.API) and the
+                planned T0.6.x milestones + safety gates. Static/deterministic:
+                reads no files, modifies nothing, and never detects, calls, or
+                executes CodeWalker. The active adapter stays NullRpfAdapter;
+                writerAllowedNow and codewalkerWriteAllowedNow are always false.
+  codewalker-detect [--base-url <url>] [--out <out.json>]
+                Detect a local CodeWalker.API using read-only HTTP GET checks of
+                the base URL (default http://localhost:5555): root and
+                /api/service-status. Never calls replace/import/write or any
+                mutation endpoint, never executes CodeWalker as a process, and
+                never opens or modifies an RPF archive. An offline server yields
+                reachable=false (not an error). The active adapter stays
+                NullRpfAdapter; canWriteArchive, replaceEndpointCalled,
+                writeEndpointsCalled, modifiesArchive, and writerAllowed are
+                always false. Exits 0.
+  codewalker-readiness [--base-url <url>] [--out <out.json>]
+                Read-only readiness probe for a local CodeWalker.API. Builds on
+                codewalker-detect, then does one extra GET /api/service-status and
+                tolerantly parses readiness / GTA path info if present. Uses GET
+                only — never POST, never replace/import/reload-services/set-config
+                or any mutation endpoint, never executes CodeWalker, never opens or
+                modifies an RPF archive. Offline yields reachable=false (not an
+                error). codewalkerApiReadyForReplace, canWriteArchive, and
+                writerAllowed are always false. Exits 0.
+  codewalker-resolve-targets --entry-manifest-report <path> [--base-url <url>]
+                [--readiness-report <path>] [--out <out.json>]
+                Map RPF entry manifest entries to CodeWalker search results using
+                read-only GET /api/search-file?filename=<name>. Resolves a target
+                only on a unique exact or unique suffix match; filename-only and
+                ambiguous matches stay unresolved. GET-only — never POST, never
+                replace/import/reload-services/set-config or any mutation endpoint,
+                never executes CodeWalker, never opens or modifies an RPF archive.
+                Offline yields all targets unresolved (not an error).
+                canWriteArchive and writerAllowed are always false. Exits 0.
+  codewalker-dry-replace-plan --bundle-dir <path> --entry-manifest-report <path>
+                --resolve-report <path> [--permission-report <path>] [--out <out.json>]
+                Combine the entry manifest, the CodeWalker resolve report, and the
+                providing bundle files into MODELLED /api/replace-file payloads for a
+                future writer. Reads only local report/bundle files. Sends NO HTTP
+                request, never uses POST, never calls replace/import/reload-services/
+                set-config or any mutation endpoint, never executes CodeWalker or any
+                external tool, never opens or modifies an RPF archive. dryRunOnly is
+                true; readyForExecution, writerAllowed, and codewalkerExecutionAllowed
+                are always false. Item-level blockers do not fail the report. Exits 0.
+  codewalker-execution-gate --target-rpf <path> --dry-replace-plan <path>
+                --permission-report <path> --readiness-report <path>
+                --entry-manifest-report <path> --backup-report <path>
+                --target-is-test-copy [--out <out.json>]
+                Decide whether a FUTURE CodeWalker replace attempt against the target
+                archive would even be eligible. Reads only the local target fixture
+                and the five report files. Eligibility requires a copied test archive
+                (confirmed via --target-is-test-copy, not an original game path) plus a
+                valid dry replace plan, permission token, readiness report, entry
+                manifest, and a hash-verified backup. Sends NO HTTP request, never uses
+                POST, never calls replace/import/reload-services/set-config or any
+                mutation endpoint, never executes CodeWalker or any external tool, never
+                opens or modifies an RPF archive. codewalkerExecutionEligible may be
+                true, but codewalkerExecutionAllowedNow, codewalkerExecutionPerformed,
+                writerAllowed, and modifiesArchive are always false. Exits 0.
+  codewalker-replace-apply --base-url <url> --execution-gate-report <path>
+                --dry-replace-plan <path> --execute --confirm "<phrase>" [--out <out.json>]
+                First scoped CodeWalker replace executor. Sends POST /api/replace-file
+                for each planned request ONLY when the execution gate is eligible, the
+                target is a copied test archive, --execute is given, and --confirm
+                exactly matches the required phrase. Copied test archives only — never
+                an original game archive. Sends ONLY /api/replace-file; never calls
+                import/reload-services/set-config or the search endpoint, never executes
+                CodeWalker as a process or any external tool, never parses RPF internals,
+                never rolls back. On any blocking gate failure NO HTTP request is sent.
+                Global writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
+  codewalker-post-write-verify --target-rpf <path> --replace-apply-report <path>
+                --backup-report <path> --execution-gate-report <path>
+                --dry-replace-plan <path> [--out <out.json>]
+                Verify the result of a replace apply: compute the current target
+                SHA-256, compare it against the apply report pre/post hashes and the
+                backup report, classify the outcome, and build a rollback PLAN pointing
+                at the verified backup. Local read-only: never restores the backup,
+                never modifies the target, never calls CodeWalker, never sends an HTTP
+                request, never uses POST, never executes an external tool, never parses
+                RPF internals. rollbackExecuted and rollbackExecutionAllowed are always
+                false; the active adapter stays NullRpfAdapter. Exits 0.
+  codewalker-rollback-restore --target-rpf <path> --post-write-verify-report <path>
+                --backup-report <path> --execute-rollback --confirm "<phrase>" [--out <out.json>]
+                Restore a COPIED TEST target archive from its verified backup by
+                copying the backup file over it — only when the post-write
+                verification report has a ready rollback plan, the backup report is
+                hash-verified and safe, the recomputed backup hash matches, the target
+                is a copied test archive (never an original game path), --execute-
+                rollback is given, and --confirm matches exactly. Never calls
+                CodeWalker, never sends an HTTP request, never uses POST, never
+                executes an external tool, never parses RPF internals, never creates a
+                backup. On any blocking gate failure the target is NOT modified. Global
+                writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
+  codewalker-manual-harness --target-rpf <path> --target-is-test-copy [--base-url <url>]
+                [--project-dir <path>] [--bundle-dir <path>] [--generate-script]
+                [--execute] [--confirm "<phrase>"] [--out <out.json>]
+                First real copied-archive MANUAL TEST HARNESS. Validates the copied
+                test target, classifies it conservatively (original game paths are
+                blocked), and produces a structured plan plus a manual command
+                checklist for the full CodeWalker copied-test flow (probe, backup,
+                detect, readiness, entry manifest, resolve, dry replace, permission,
+                execution gate, replace apply, post-write verify, optional rollback).
+                With --generate-script it writes a safe PowerShell checklist under
+                .tmp or --project-dir, with the mutating commands commented out behind
+                placeholders. In plan/generate-script mode it calls nothing, sends NO
+                HTTP request, never uses POST, executes no external tool, parses no RPF
+                internals, and NEVER modifies the target archive. Even when --execute
+                is given and --confirm matches, this milestone keeps executionPerformed
+                false and performs no automatic full execution. Exits 0.
+  codewalker-compat-probe [--base-url <url>] [--search-filename <name>]
+                [--check-replace-options] [--out <out.json>]
+                Live compatibility probe. Checks the shape/availability of the
+                CodeWalker.API endpoints a future live replace would need, using only
+                SAFE non-mutating requests: GET /, GET /api/service-status, GET
+                /api/search-file?filename=<name> (default visualsettings.dat), and —
+                only with --check-replace-options — a single HTTP OPTIONS on
+                /api/replace-file. It NEVER sends POST /api/replace-file, never calls
+                import/reload-services/set-config, never executes CodeWalker, never
+                parses RPF internals, and never modifies an archive. Records HTTP
+                statuses and response-shape samples (body sample capped at 2048 chars).
+                An offline server yields a valid offline report (exits 0).
+                writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
+  codewalker-test-run --target-rpf <path> --project-dir <path> --backup-report <path>
+                --readiness-report <path> --entry-manifest-report <path>
+                --resolve-report <path> --dry-replace-plan <path>
+                --execution-gate-report <path> [--compatibility-probe-report <path>]
+                [--base-url <url>] [--execute] [--confirm "<phrase>"] [--out <out.json>]
+                Real copied-archive test-run COORDINATOR. Validates every required
+                input and produces a single run report for a full CodeWalker copied-
+                test replace cycle. Plan mode is the default and safe: it calls
+                nothing, sends NO HTTP request, executes no external tool, parses no
+                RPF internals, and NEVER modifies the target. Execute mode requires
+                --execute plus the exact confirm phrase and every eligibility gate;
+                only then does it invoke the existing replace apply (copied test
+                archives only) followed by post-write verification. Copied test
+                archives only — original game paths are blocked. Never rolls back
+                automatically, never executes CodeWalker as a process. Global
+                writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
+  editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
 Notes:
@@ -347,6 +616,36 @@ Notes:
     baseline_update_tree_fingerprint.json, baseline_metadata.json into the --out folder.
   - classify-rpf quick-scans an unknown .rpf and compares its tree against the clean baseline
     to detect renamed update.rpf files. Output: classification.json.
+  - dry-run does not modify update.rpf or any real game files. It only evaluates the
+    PatchPlan and reports what would happen.
+  - inventory is read-only. --workspace points to an extracted RPF-like directory tree.
+    No real game files are modified.
+  - stage copies target files to a separate staging directory. The source workspace
+    and all RPF archives remain untouched.
+  - apply-stage modifies only files inside --stage-dir. The source workspace is never
+    read or written. RPF archives are not modified. This is the first actual patch
+    application layer, but still sandboxed to the staging directory.
+  - diff-stage compares workspace files against staged (patched) counterparts. It is
+    read-only and does not modify any file. Use it to preview what a patch changed
+    before any export or future RPF writing step.
+  - export-bundle creates a portable patch bundle folder from the staged files. It copies
+    the patched staged files into <bundle-dir>/files/ and bundles the patch plan and report
+    files (bundle_manifest.json, patch_plan.json, diff_report.json, plus stage/apply reports
+    when present). It never modifies the source workspace, the staged files, or any RPF
+    archive — it only writes into the bundle directory.
+  - plan-rpf-write is PLANNING ONLY. It reads an exported bundle and produces a structured
+    RPF write plan with safety gates (backup, restore, hash verification, manual
+    confirmation). It never opens, reads, or modifies the target archive. safeToWrite is
+    always false and the real_rpf_writer_not_implemented gate blocks any actual write.
+    Real RPF archive writing is intentionally not implemented in this milestone.
+  - backup-rpf is a READ/COPY-ONLY preflight. It copies a target .rpf into a backup
+    directory and verifies the copy by SHA-256. The original target archive is never
+    modified or written. A successful, hash-verified backup is a prerequisite for any
+    future controlled RPF writing. No real RPF writing is performed here.
+  - probe-rpf is a READ-ONLY preflight. It reads a target .rpf file's metadata and
+    SHA-256 hash and reports informational external-tool detection. It does not parse
+    RPF internals and never modifies the archive. canParseRpf, canWriteRpf, and
+    nativeWriterImplemented are all false in this milestone.
 "#
     );
 }
@@ -393,6 +692,37 @@ fn parse_args() -> Result<Args> {
         scanner_name: None,
         scanner_version: None,
         baseline: None,
+        file: None,
+        vmode: None,
+        patch_plan: None,
+        workspace: None,
+        stage_dir: None,
+        bundle_dir: None,
+        target_rpf: None,
+        backup_dir: None,
+        clean_rpf: None,
+        modded_rpf: None,
+        backup_report: None,
+        readiness_report: None,
+        entry_manifest_report: None,
+        resolve_report: None,
+        permission_report: None,
+        dry_replace_plan: None,
+        target_is_test_copy: false,
+        execution_gate_report: None,
+        compatibility_probe_report: None,
+        replace_apply_report: None,
+        post_write_verify_report: None,
+        execute: false,
+        execute_rollback: false,
+        confirm: None,
+        base_url: None,
+        project_dir: None,
+        generate_script: false,
+        search_filename: None,
+        check_replace_options: false,
+        changed_files: Vec::new(),
+        operation_id: None,
     };
 
     let mut explicit_mode: Option<ScanMode> = None;
@@ -458,6 +788,144 @@ fn parse_args() -> Result<Args> {
                 args.baseline = Some(PathBuf::from(
                     it.next().context("missing value for --baseline")?,
                 ))
+            }
+            "--file" => {
+                args.file = Some(PathBuf::from(
+                    it.next().context("missing value for --file")?,
+                ))
+            }
+            "--vmode" => args.vmode = Some(it.next().context("missing value for --vmode")?),
+            "--patch-plan" => {
+                args.patch_plan = Some(PathBuf::from(
+                    it.next().context("missing value for --patch-plan")?,
+                ))
+            }
+            "--plan" => {
+                args.patch_plan = Some(PathBuf::from(
+                    it.next().context("missing value for --plan")?,
+                ))
+            }
+            "--changed-files" => {
+                let value = it.next().context("missing value for --changed-files")?;
+                if value.ends_with(".json") {
+                    let content =
+                        fs::read_to_string(&value).context("failed to read changed-files JSON")?;
+                    args.changed_files = serde_json::from_str(&content)
+                        .context("failed to parse changed-files JSON")?;
+                } else {
+                    args.changed_files = value.split(',').map(|s| s.trim().to_string()).collect();
+                }
+            }
+            "--operation-id" => {
+                args.operation_id = Some(it.next().context("missing value for --operation-id")?)
+            }
+            "--workspace" => {
+                args.workspace = Some(PathBuf::from(
+                    it.next().context("missing value for --workspace")?,
+                ))
+            }
+            "--stage-dir" => {
+                args.stage_dir = Some(PathBuf::from(
+                    it.next().context("missing value for --stage-dir")?,
+                ))
+            }
+            "--bundle-dir" => {
+                args.bundle_dir = Some(PathBuf::from(
+                    it.next().context("missing value for --bundle-dir")?,
+                ))
+            }
+            "--target-rpf" => {
+                args.target_rpf = Some(PathBuf::from(
+                    it.next().context("missing value for --target-rpf")?,
+                ))
+            }
+            "--backup-dir" => {
+                args.backup_dir = Some(PathBuf::from(
+                    it.next().context("missing value for --backup-dir")?,
+                ))
+            }
+            "--clean-rpf" => {
+                args.clean_rpf = Some(PathBuf::from(
+                    it.next().context("missing value for --clean-rpf")?,
+                ))
+            }
+            "--modded-rpf" => {
+                args.modded_rpf = Some(PathBuf::from(
+                    it.next().context("missing value for --modded-rpf")?,
+                ))
+            }
+            "--backup-report" => {
+                args.backup_report = Some(PathBuf::from(
+                    it.next().context("missing value for --backup-report")?,
+                ))
+            }
+            "--readiness-report" => {
+                args.readiness_report = Some(PathBuf::from(
+                    it.next().context("missing value for --readiness-report")?,
+                ))
+            }
+            "--entry-manifest-report" => {
+                args.entry_manifest_report = Some(PathBuf::from(
+                    it.next()
+                        .context("missing value for --entry-manifest-report")?,
+                ))
+            }
+            "--resolve-report" => {
+                args.resolve_report = Some(PathBuf::from(
+                    it.next().context("missing value for --resolve-report")?,
+                ))
+            }
+            "--permission-report" => {
+                args.permission_report = Some(PathBuf::from(
+                    it.next().context("missing value for --permission-report")?,
+                ))
+            }
+            "--dry-replace-plan" => {
+                args.dry_replace_plan = Some(PathBuf::from(
+                    it.next().context("missing value for --dry-replace-plan")?,
+                ))
+            }
+            "--target-is-test-copy" => args.target_is_test_copy = true,
+            "--execution-gate-report" => {
+                args.execution_gate_report = Some(PathBuf::from(
+                    it.next()
+                        .context("missing value for --execution-gate-report")?,
+                ))
+            }
+            "--compatibility-probe-report" => {
+                args.compatibility_probe_report = Some(PathBuf::from(
+                    it.next()
+                        .context("missing value for --compatibility-probe-report")?,
+                ))
+            }
+            "--replace-apply-report" => {
+                args.replace_apply_report = Some(PathBuf::from(
+                    it.next()
+                        .context("missing value for --replace-apply-report")?,
+                ))
+            }
+            "--post-write-verify-report" => {
+                args.post_write_verify_report = Some(PathBuf::from(
+                    it.next()
+                        .context("missing value for --post-write-verify-report")?,
+                ))
+            }
+            "--project-dir" => {
+                args.project_dir = Some(PathBuf::from(
+                    it.next().context("missing value for --project-dir")?,
+                ))
+            }
+            "--generate-script" => args.generate_script = true,
+            "--search-filename" => {
+                args.search_filename =
+                    Some(it.next().context("missing value for --search-filename")?)
+            }
+            "--check-replace-options" => args.check_replace_options = true,
+            "--execute" => args.execute = true,
+            "--execute-rollback" => args.execute_rollback = true,
+            "--confirm" => args.confirm = Some(it.next().context("missing value for --confirm")?),
+            "--base-url" => {
+                args.base_url = Some(it.next().context("missing value for --base-url")?)
             }
             "--analyze-text" => args.analyze_text = true,
             "--build-learning-corpus" => args.build_learning_corpus = true,
@@ -6714,9 +7182,8 @@ fn build_timecycle_file_rankings(
 
     {
         let mut score = 960;
-        let mut evidence = vec![
-            "Filename suggests global visual settings with named parameters.".to_string(),
-        ];
+        let mut evidence =
+            vec!["Filename suggests global visual settings with named parameters.".to_string()];
         let mut confidence = "low".to_string();
         if let Some(entry) = visual_entry {
             evidence.push(format!(
@@ -6775,7 +7242,9 @@ fn build_timecycle_file_rankings(
                 entry.colorLikeChanges, entry.numericChanges
             ));
             if entry.colorLikeChanges > 0 && entry.numericChanges == 0 {
-                evidence.push("Only color-like changes were observed in the analyzed diff.".to_string());
+                evidence.push(
+                    "Only color-like changes were observed in the analyzed diff.".to_string(),
+                );
                 confidence = "high".to_string();
             } else if entry.colorLikeChanges > 0 {
                 evidence.push(
@@ -6814,7 +7283,8 @@ fn build_timecycle_file_rankings(
 
     {
         let mut score = 760;
-        let mut evidence = vec!["Primary timecycle mods file with a sky-oriented name.".to_string()];
+        let mut evidence =
+            vec!["Primary timecycle mods file with a sky-oriented name.".to_string()];
         let mut confidence = "low".to_string();
         if let Some(entry) = mods1_entry {
             evidence.push(format!(
@@ -6858,7 +7328,8 @@ fn build_timecycle_file_rankings(
 
     {
         let mut score = 700;
-        let mut evidence = vec!["Fog-specific weather filename suggests a narrow validation target.".to_string()];
+        let mut evidence =
+            vec!["Fog-specific weather filename suggests a narrow validation target.".to_string()];
         let mut confidence = "low".to_string();
         if let Some(entry) = foggy_entry {
             evidence.push(format!(
@@ -6896,7 +7367,9 @@ fn build_timecycle_file_rankings(
 
     {
         let mut score = 680;
-        let mut evidence = vec!["Cloud-named weather file suggests sky tint or cloud color relevance.".to_string()];
+        let mut evidence = vec![
+            "Cloud-named weather file suggests sky tint or cloud color relevance.".to_string(),
+        ];
         let mut confidence = "low".to_string();
         if let Some(entry) = clouds_entry {
             evidence.push(format!(
@@ -6953,8 +7426,7 @@ fn build_timecycle_file_rankings(
             score += (weather_family_numeric.min(2000) / 60) as i32;
         } else {
             evidence.push(
-                "No weather-family XML files were available in analyzed text results."
-                    .to_string(),
+                "No weather-family XML files were available in analyzed text results.".to_string(),
             );
             score -= 420;
         }
@@ -7096,7 +7568,10 @@ fn build_timecycle_file_rankings(
         ));
     }
 
-    ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.path_or_family.cmp(&b.1.path_or_family)));
+    ranked.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.path_or_family.cmp(&b.1.path_or_family))
+    });
 
     ranked
         .into_iter()
@@ -7318,16 +7793,17 @@ fn build_visualsettings_key_report(
             let family_name = visualsettings_family_for_key(&change.key).to_string();
             let (risk, safe_for_first_patch, hypothesis) =
                 visualsettings_family_profile(&family_name);
-            let family = families
-                .entry(family_name.clone())
-                .or_insert_with(|| VisualsettingsKeyFamily {
-                    family: family_name.clone(),
-                    keys: Vec::new(),
-                    sample_changes: Vec::new(),
-                    risk: risk.to_string(),
-                    safe_for_first_patch,
-                    hypothesis: hypothesis.to_string(),
-                });
+            let family =
+                families
+                    .entry(family_name.clone())
+                    .or_insert_with(|| VisualsettingsKeyFamily {
+                        family: family_name.clone(),
+                        keys: Vec::new(),
+                        sample_changes: Vec::new(),
+                        risk: risk.to_string(),
+                        safe_for_first_patch,
+                        hypothesis: hypothesis.to_string(),
+                    });
             if !family.keys.contains(&change.key) {
                 family.keys.push(change.key.clone());
             }
@@ -7454,11 +7930,9 @@ fn weather_xml_entry_from_xml(entry: &XmlDiffEntry) -> WeatherXmlEntry {
         "Global weather configuration candidate; likely touches multiple systems and should stay deferred until effect mapping is clearer."
             .to_string()
     } else if name.contains("fog") {
-        "Fog-named weather file — candidate for fog or overcast color tuning."
-            .to_string()
+        "Fog-named weather file — candidate for fog or overcast color tuning.".to_string()
     } else if name.contains("cloud") {
-        "Cloud-named weather file — candidate for cloud or sky tint tuning."
-            .to_string()
+        "Cloud-named weather file — candidate for cloud or sky tint tuning.".to_string()
     } else {
         "Weather-family file with readable diffs; treat as a possible follow-up after safer color-only validation."
             .to_string()
@@ -7645,12 +8119,18 @@ fn timecycle_safe_first_patch_candidates<'a>(
 fn timecycle_scope_note_for_file(file: &str) -> &'static str {
     match file {
         "visualsettings.dat" => "Prefer one named key or one small key family at a time.",
-        "cloudkeyframes.xml" => "Stay with color-like desaturation or darkening only for the first pass.",
-        "timecycle_mods_1.xml" => "Restrict the first patch to clearly color-like values until schema mapping improves.",
+        "cloudkeyframes.xml" => {
+            "Stay with color-like desaturation or darkening only for the first pass."
+        }
+        "timecycle_mods_1.xml" => {
+            "Restrict the first patch to clearly color-like values until schema mapping improves."
+        }
         "w_foggy.xml" | "w_clouds.xml" => {
             "Prefer color-only weather tint changes; defer density-style numeric edits."
         }
-        "w_*.xml family" => "Use the family only for repeated-pattern planning, not for broad direct edits.",
+        "w_*.xml family" => {
+            "Use the family only for repeated-pattern planning, not for broad direct edits."
+        }
         _ => "Keep the patch narrow and validation-heavy.",
     }
 }
@@ -7919,7 +8399,8 @@ fn render_ai_timecycle_context_compact(
         })
         .collect::<Vec<_>>();
     let safe_scope_text = if safe_scope.is_empty() {
-        "- No file was confirmed as a safe first-patch candidate; stay in review-only mode.".to_string()
+        "- No file was confirmed as a safe first-patch candidate; stay in review-only mode."
+            .to_string()
     } else {
         format!(
             "These are the best candidates for planning a first patch because they combine sky/timecycle relevance with relatively readable evidence. Even here, the first patch should remain color-focused or single-key-focused.\n{}",
@@ -8097,10 +8578,7 @@ fn build_and_write_timecycle_intelligence(
         entries: safe_matrix,
     };
 
-    fs::write(
-        tc_dir.join("timecycle_strategy_report.md"),
-        strategy_report,
-    )?;
+    fs::write(tc_dir.join("timecycle_strategy_report.md"), strategy_report)?;
     fs::write(
         tc_dir.join("timecycle_file_rankings.json"),
         serde_json::to_string_pretty(&rankings_report)?,
@@ -8156,7 +8634,11 @@ mod tests {
         }
     }
 
-    fn make_timecycle_xml_entry(path: &str, numeric_changes: usize, color_like_changes: usize) -> XmlDiffEntry {
+    fn make_timecycle_xml_entry(
+        path: &str,
+        numeric_changes: usize,
+        color_like_changes: usize,
+    ) -> XmlDiffEntry {
         XmlDiffEntry {
             path: path.to_string(),
             status: "modified".to_string(),
@@ -9448,7 +9930,10 @@ mod tests {
             )],
         );
         let rankings = build_timecycle_file_rankings(Some(&results));
-        assert_eq!(rankings.first().unwrap().path_or_family, "visualsettings.dat");
+        assert_eq!(
+            rankings.first().unwrap().path_or_family,
+            "visualsettings.dat"
+        );
         assert_eq!(rankings.first().unwrap().rank, 1);
     }
 
@@ -10475,11 +10960,652 @@ fn main() -> Result<()> {
             println!("out: {}", out_path.display());
             println!("SCANNER_OK {}", out_path.display());
         }
+        "validate-xml" => {
+            let file = args.file.clone().context("validate-xml requires --file")?;
+            let vmode = match args.vmode.as_deref() {
+                Some("parse_only") => Some(validators::xml_validator::XmlValidationMode::ParseOnly),
+                Some("color_like_only") => {
+                    Some(validators::xml_validator::XmlValidationMode::ColorLikeOnly)
+                }
+                Some("structure_preserved") => {
+                    Some(validators::xml_validator::XmlValidationMode::StructurePreserved)
+                }
+                Some("no_numeric_changes") => {
+                    Some(validators::xml_validator::XmlValidationMode::NoNumericChanges)
+                }
+                Some("diff_against_baseline") => {
+                    Some(validators::xml_validator::XmlValidationMode::DiffAgainstBaseline)
+                }
+                Some(other) => anyhow::bail!("invalid vmode for xml: {}", other),
+                None => None,
+            };
+            let result =
+                validators::xml_validator::validate_xml(&file, vmode, args.baseline.as_deref());
+            write_validation_result(args.out.as_ref(), &result)?;
+            if !result.ok {
+                std::process::exit(1);
+            }
+        }
+        "validate-dat" => {
+            let file = args.file.clone().context("validate-dat requires --file")?;
+            let vmode = match args.vmode.as_deref() {
+                Some("parse_only") => Some(validators::dat_validator::DatValidationMode::ParseOnly),
+                Some("named_key_only") => {
+                    Some(validators::dat_validator::DatValidationMode::NamedKeyOnly)
+                }
+                Some("allowed_family_only") => {
+                    Some(validators::dat_validator::DatValidationMode::AllowedFamilyOnly)
+                }
+                Some("diff_against_baseline") => {
+                    Some(validators::dat_validator::DatValidationMode::DiffAgainstBaseline)
+                }
+                Some(other) => anyhow::bail!("invalid vmode for dat: {}", other),
+                None => None,
+            };
+            let result =
+                validators::dat_validator::validate_dat(&file, vmode, args.baseline.as_deref());
+            write_validation_result(args.out.as_ref(), &result)?;
+            if !result.ok {
+                std::process::exit(1);
+            }
+        }
+        "validate-scope" => {
+            let plan = args
+                .patch_plan
+                .clone()
+                .context("validate-scope requires --patch-plan")?;
+            let result = validators::scope_validator::validate_scope(&plan, &args.changed_files);
+            write_validation_result(args.out.as_ref(), &result)?;
+            if !result.ok {
+                std::process::exit(1);
+            }
+        }
+        "editor-dry-run" => {
+            let plan = args
+                .patch_plan
+                .clone()
+                .context("editor-dry-run requires --patch-plan")?;
+            let result = editors::dry_run::execute_dry_run(&plan, args.operation_id.as_deref())?;
+            write_validation_result(args.out.as_ref(), &result)?;
+            if !result.ok {
+                std::process::exit(1);
+            }
+        }
+        "dry-run" => {
+            let plan = args.patch_plan.clone().context("dry-run requires --plan")?;
+            let report = editors::dry_run::build_dry_run_report(&plan, args.workspace.as_deref())?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.safe_to_apply {
+                std::process::exit(1);
+            }
+        }
+        "inventory" => {
+            let ws = args
+                .workspace
+                .clone()
+                .context("inventory requires --workspace")?;
+            let report = inventory::scanner::scan_workspace(&ws)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "stage" => {
+            let plan = args.patch_plan.clone().context("stage requires --plan")?;
+            let ws = args
+                .workspace
+                .clone()
+                .context("stage requires --workspace")?;
+            let stage_dir = args
+                .stage_dir
+                .clone()
+                .context("stage requires --stage-dir")?;
+            let report = staging::stager::stage_patch_plan(&plan, &ws, &stage_dir)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.safe_to_stage {
+                std::process::exit(1);
+            }
+        }
+        "apply-stage" => {
+            let plan = args
+                .patch_plan
+                .clone()
+                .context("apply-stage requires --plan")?;
+            let stage_dir = args
+                .stage_dir
+                .clone()
+                .context("apply-stage requires --stage-dir")?;
+            let report = apply::text_apply::apply_patch_plan_to_stage(&plan, &stage_dir)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.safe_applied {
+                std::process::exit(1);
+            }
+        }
+        "diff-stage" => {
+            let ws = args
+                .workspace
+                .clone()
+                .context("diff-stage requires --workspace")?;
+            let stage_dir = args
+                .stage_dir
+                .clone()
+                .context("diff-stage requires --stage-dir")?;
+            let report = diff::preview::build_stage_diff_report(&ws, &stage_dir)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.diffed_clean {
+                std::process::exit(1);
+            }
+        }
+        "export-bundle" => {
+            let plan = args
+                .patch_plan
+                .clone()
+                .context("export-bundle requires --plan")?;
+            let ws = args
+                .workspace
+                .clone()
+                .context("export-bundle requires --workspace")?;
+            let stage_dir = args
+                .stage_dir
+                .clone()
+                .context("export-bundle requires --stage-dir")?;
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("export-bundle requires --bundle-dir")?;
+            let report = export::bundle::export_patch_bundle(&plan, &ws, &stage_dir, &bundle_dir)
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.safe_exported {
+                std::process::exit(1);
+            }
+        }
+        "plan-rpf-write" => {
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("plan-rpf-write requires --bundle-dir")?;
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("plan-rpf-write requires --target-rpf")?;
+            // Planning only — this never opens or modifies the target archive,
+            // and safe_to_write is always false in this milestone.
+            let plan = rpf_writer::plan::build_rpf_write_plan(&bundle_dir, &target_rpf)
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &plan)?;
+        }
+        "backup-rpf" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("backup-rpf requires --target-rpf")?;
+            let backup_dir = args
+                .backup_dir
+                .clone()
+                .context("backup-rpf requires --backup-dir")?;
+            // Read-only preflight: copies the target into backup_dir and verifies
+            // by SHA-256. The original target archive is never modified.
+            let report = rpf_backup::backup::backup_rpf_archive(&target_rpf, &backup_dir)
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if !report.safe_for_future_write {
+                std::process::exit(1);
+            }
+        }
+        "probe-rpf" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("probe-rpf requires --target-rpf")?;
+            // Read-only probe: reads metadata + SHA-256 and detects external tools.
+            // It never parses RPF internals and never modifies the archive.
+            let report =
+                rpf_probe::probe::probe_rpf_archive(&target_rpf).map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if report.status != rpf_probe::model::RpfProbeStatus::Probed {
+                std::process::exit(1);
+            }
+        }
+        "compare-rpf" => {
+            let clean_rpf = args
+                .clean_rpf
+                .clone()
+                .context("compare-rpf requires --clean-rpf")?;
+            let modded_rpf = args
+                .modded_rpf
+                .clone()
+                .context("compare-rpf requires --modded-rpf")?;
+            // Read-only comparison: reads metadata + SHA-256 for both archives.
+            // It never parses RPF internals and never modifies either archive.
+            let report = rpf_compare::compare::compare_rpf_archives(&clean_rpf, &modded_rpf)
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if report.status != rpf_compare::model::RpfCompareStatus::Compared {
+                std::process::exit(1);
+            }
+        }
+        "rpf-adapter-info" => {
+            // Inspection only: reports the current adapter contract/capabilities.
+            // The NullRpfAdapter never opens, parses, or modifies any archive.
+            let adapter = rpf_adapter::null_adapter::NullRpfAdapter::new();
+            let report = rpf_adapter::contract::build_adapter_info_report(&adapter);
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "rpf-external-tools" => {
+            // Planning only: detects known tools on PATH (informational) and
+            // marks every mutation/auto-execution path blocked. No tool is run.
+            let plan =
+                rpf_external::build_external_tool_adapter_plan().map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &plan)?;
+        }
+        "write-readiness" => {
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("write-readiness requires --bundle-dir")?;
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("write-readiness requires --target-rpf")?;
+            // Read-only: combines existing preflight reports into one decision
+            // object. Never opens/modifies the target, bundle, or backups, and
+            // never executes external tools. readyToWrite is always false.
+            let report = rpf_readiness::readiness::build_write_readiness_report(
+                &bundle_dir,
+                &target_rpf,
+                args.backup_report.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "rpf-entry-manifest" => {
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("rpf-entry-manifest requires --bundle-dir")?;
+            // Read-only: reads bundle_manifest.json and walks files/. Never parses
+            // or modifies the target RPF; never executes external tools.
+            let report = rpf_entry_manifest::manifest::build_rpf_entry_manifest(
+                &bundle_dir,
+                args.target_rpf.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+            if report.status != rpf_entry_manifest::model::RpfEntryManifestStatus::Built {
+                std::process::exit(1);
+            }
+        }
+        "writer-permission" => {
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("writer-permission requires --bundle-dir")?;
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("writer-permission requires --target-rpf")?;
+            // Read-only: models the manual confirmation/permission token required
+            // before any future RPF write. Never opens/modifies the target,
+            // bundle, or backups; never executes external tools; never creates
+            // backups. writerAllowed is always false (the writer is not
+            // implemented), so a token never authorizes writing.
+            let report = rpf_permission::permission::build_writer_permission_report(
+                &bundle_dir,
+                &target_rpf,
+                args.readiness_report.as_deref(),
+                args.entry_manifest_report.as_deref(),
+                args.backup_report.as_deref(),
+                args.confirm.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-strategy" => {
+            // Static, deterministic strategy report. Locks CodeWalker.API as the
+            // future writer route. Reads no files, modifies nothing, executes no
+            // external tool, and never enables writing.
+            let report = codewalker_strategy::strategy::build_codewalker_strategy_report()
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-detect" => {
+            // Read-only detection of a local CodeWalker.API. Performs only safe
+            // HTTP GET checks (root + /api/service-status) against the base URL.
+            // Never calls replace/import/write or any mutation endpoint, never
+            // executes CodeWalker as a process, never opens or modifies an RPF
+            // archive. Offline servers yield reachable=false, not an error.
+            // writerAllowed and all write capabilities stay false. Exits 0.
+            let report = codewalker_api::detect::detect_codewalker_api(args.base_url.as_deref())
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-readiness" => {
+            // Read-only readiness probe. Builds on detection, then does one extra
+            // safe GET /api/service-status and tolerantly parses it. Never calls
+            // replace/import/reload-services/set-config, never issues a POST or any
+            // mutation, never executes CodeWalker, never opens or modifies an RPF
+            // archive. readyForReplace/canWriteArchive/writerAllowed stay false.
+            // Offline yields a valid not-ready report. Exits 0.
+            let report =
+                codewalker_api::readiness::probe_codewalker_api_readiness(args.base_url.as_deref())
+                    .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-resolve-targets" => {
+            let entry_manifest_report = args
+                .entry_manifest_report
+                .clone()
+                .context("codewalker-resolve-targets requires --entry-manifest-report")?;
+            // Read-only search/target-resolution planner. Reads the entry manifest
+            // and issues only safe GET /api/search-file calls. Never calls
+            // replace/import/reload-services/set-config, never issues a POST or any
+            // mutation, never executes CodeWalker, never opens or modifies an RPF
+            // archive. canWriteArchive/writerAllowed stay false. Exits 0.
+            let report = codewalker_api::search::build_codewalker_search_resolve_report(
+                &entry_manifest_report,
+                args.base_url.as_deref(),
+                args.readiness_report.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-dry-replace-plan" => {
+            let bundle_dir = args
+                .bundle_dir
+                .clone()
+                .context("codewalker-dry-replace-plan requires --bundle-dir")?;
+            let entry_manifest_report = args
+                .entry_manifest_report
+                .clone()
+                .context("codewalker-dry-replace-plan requires --entry-manifest-report")?;
+            let resolve_report = args
+                .resolve_report
+                .clone()
+                .context("codewalker-dry-replace-plan requires --resolve-report")?;
+            // Local, read-only dry replace planner. Combines the entry manifest,
+            // the resolve report, and the providing bundle files into MODELLED
+            // /api/replace-file payloads. Sends NO HTTP request, never uses POST,
+            // never calls replace/import/reload-services/set-config or any
+            // mutation endpoint, never executes CodeWalker or any external tool,
+            // and never opens or modifies an RPF archive. readyForExecution,
+            // writerAllowed, and codewalkerExecutionAllowed stay false. Exits 0.
+            let report = codewalker_api::dry_replace::build_codewalker_dry_replace_plan(
+                &bundle_dir,
+                &entry_manifest_report,
+                &resolve_report,
+                args.permission_report.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-execution-gate" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("codewalker-execution-gate requires --target-rpf")?;
+            let dry_replace_plan = args
+                .dry_replace_plan
+                .clone()
+                .context("codewalker-execution-gate requires --dry-replace-plan")?;
+            let permission_report = args
+                .permission_report
+                .clone()
+                .context("codewalker-execution-gate requires --permission-report")?;
+            let readiness_report = args
+                .readiness_report
+                .clone()
+                .context("codewalker-execution-gate requires --readiness-report")?;
+            let entry_manifest_report = args
+                .entry_manifest_report
+                .clone()
+                .context("codewalker-execution-gate requires --entry-manifest-report")?;
+            let backup_report = args
+                .backup_report
+                .clone()
+                .context("codewalker-execution-gate requires --backup-report")?;
+            // Local, read-only copied-test-archive execution gate. Decides
+            // whether a FUTURE CodeWalker replace attempt would be eligible.
+            // Reads only the local target fixture and the five report files.
+            // Sends NO HTTP request, never uses POST, never calls replace/import/
+            // reload-services/set-config or any mutation endpoint, never executes
+            // CodeWalker or any external tool, and never opens or modifies an RPF
+            // archive. codewalkerExecutionEligible may be true, but
+            // codewalkerExecutionAllowedNow, codewalkerExecutionPerformed,
+            // writerAllowed, and modifiesArchive stay false. Exits 0.
+            let report = codewalker_api::execution_gate::build_codewalker_execution_gate_report(
+                &target_rpf,
+                &dry_replace_plan,
+                &permission_report,
+                &readiness_report,
+                &entry_manifest_report,
+                &backup_report,
+                args.target_is_test_copy,
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-replace-apply" => {
+            let execution_gate_report = args
+                .execution_gate_report
+                .clone()
+                .context("codewalker-replace-apply requires --execution-gate-report")?;
+            let dry_replace_plan = args
+                .dry_replace_plan
+                .clone()
+                .context("codewalker-replace-apply requires --dry-replace-plan")?;
+            // First scoped CodeWalker replace executor. Sends POST /api/replace-file
+            // for each planned request ONLY when the T0.6.4 execution gate is
+            // eligible, the target is a copied test archive, --execute is given, and
+            // the exact confirmation phrase matches. Never calls import/reload-
+            // services/set-config or the search endpoint, never executes CodeWalker
+            // as a process or any external tool, never parses RPF internals, never
+            // rolls back. Global writerAllowed stays false; NullRpfAdapter stays
+            // active. On any blocking gate failure, NO HTTP request is sent. Exits 0.
+            let report = codewalker_api::replace_apply::apply_codewalker_replace_on_test_archive(
+                args.base_url.as_deref(),
+                &execution_gate_report,
+                &dry_replace_plan,
+                args.execute,
+                args.confirm.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-post-write-verify" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("codewalker-post-write-verify requires --target-rpf")?;
+            let replace_apply_report = args
+                .replace_apply_report
+                .clone()
+                .context("codewalker-post-write-verify requires --replace-apply-report")?;
+            let backup_report = args
+                .backup_report
+                .clone()
+                .context("codewalker-post-write-verify requires --backup-report")?;
+            let execution_gate_report = args
+                .execution_gate_report
+                .clone()
+                .context("codewalker-post-write-verify requires --execution-gate-report")?;
+            let dry_replace_plan = args
+                .dry_replace_plan
+                .clone()
+                .context("codewalker-post-write-verify requires --dry-replace-plan")?;
+            // Local, read-only post-write verification + rollback plan. Reads the
+            // target file and the four reports, compares pre/post/backup hashes,
+            // classifies the outcome, and builds a rollback PLAN. Never restores
+            // the backup, never modifies the target, never calls CodeWalker, never
+            // sends an HTTP request, never uses POST, never executes an external
+            // tool, never parses RPF internals. rollbackExecuted and
+            // rollbackExecutionAllowed stay false. Exits 0.
+            let report =
+                codewalker_api::post_write_verify::build_codewalker_post_write_verify_report(
+                    &target_rpf,
+                    &replace_apply_report,
+                    &backup_report,
+                    &execution_gate_report,
+                    &dry_replace_plan,
+                )
+                .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-rollback-restore" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("codewalker-rollback-restore requires --target-rpf")?;
+            let post_write_verify_report = args
+                .post_write_verify_report
+                .clone()
+                .context("codewalker-rollback-restore requires --post-write-verify-report")?;
+            let backup_report = args
+                .backup_report
+                .clone()
+                .context("codewalker-rollback-restore requires --backup-report")?;
+            // Controlled rollback restore. Copies the verified backup file back over
+            // a COPIED TEST target archive ONLY when the post-write verification
+            // report has a ready rollback plan, the backup report is hash-verified
+            // and safe, the recomputed backup hash matches, the target is a copied
+            // test archive (never an original game path), --execute-rollback is
+            // given, and --confirm matches exactly. Never calls CodeWalker, never
+            // sends an HTTP request, never uses POST, never executes an external
+            // tool, never parses RPF internals, never creates a backup. Global
+            // writerAllowed stays false; NullRpfAdapter stays active. On any
+            // blocking gate failure the target is NOT modified. Exits 0.
+            let report = codewalker_api::rollback_restore::execute_codewalker_rollback_restore(
+                &target_rpf,
+                &post_write_verify_report,
+                &backup_report,
+                args.execute_rollback,
+                args.confirm.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-manual-harness" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("codewalker-manual-harness requires --target-rpf")?;
+            // First real copied-archive manual test harness. Validates the copied
+            // test target, classifies it conservatively (blocking original game
+            // paths), and produces a structured plan + manual command checklist for
+            // the full CodeWalker copied-test flow. Optionally writes a safe
+            // PowerShell checklist/script under .tmp or the provided project dir.
+            // In plan/generate-script mode it calls nothing, sends NO HTTP request,
+            // never uses POST, executes no external tool, parses no RPF internals,
+            // and NEVER modifies the target archive. Even when --execute is given
+            // and --confirm matches, this milestone keeps executionPerformed false
+            // and performs no automatic full execution. Exits 0.
+            let report = codewalker_api::manual_harness::build_codewalker_manual_test_harness(
+                &target_rpf,
+                args.base_url.as_deref(),
+                args.target_is_test_copy,
+                args.project_dir.as_deref(),
+                args.bundle_dir.as_deref(),
+                args.generate_script,
+                args.execute,
+                args.confirm.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-compat-probe" => {
+            // Live compatibility probe. Checks CodeWalker.API endpoint shapes/
+            // availability with ONLY safe non-mutating requests: GET /, GET
+            // /api/service-status, GET /api/search-file?filename=..., and (only with
+            // --check-replace-options) a single HTTP OPTIONS on /api/replace-file.
+            // Never sends POST /api/replace-file, never calls import/reload-services/
+            // set-config, never executes CodeWalker, never parses RPF internals, and
+            // never modifies an archive. Offline yields a valid offline report.
+            // writerAllowed stays false; NullRpfAdapter stays active. Exits 0.
+            let report = codewalker_api::compat_probe::probe_codewalker_live_compatibility(
+                args.base_url.as_deref(),
+                args.search_filename.as_deref(),
+                args.check_replace_options,
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-test-run" => {
+            let target_rpf = args
+                .target_rpf
+                .clone()
+                .context("codewalker-test-run requires --target-rpf")?;
+            let project_dir = args
+                .project_dir
+                .clone()
+                .context("codewalker-test-run requires --project-dir")?;
+            let backup_report = args
+                .backup_report
+                .clone()
+                .context("codewalker-test-run requires --backup-report")?;
+            let readiness_report = args
+                .readiness_report
+                .clone()
+                .context("codewalker-test-run requires --readiness-report")?;
+            let entry_manifest_report = args
+                .entry_manifest_report
+                .clone()
+                .context("codewalker-test-run requires --entry-manifest-report")?;
+            let resolve_report = args
+                .resolve_report
+                .clone()
+                .context("codewalker-test-run requires --resolve-report")?;
+            let dry_replace_plan = args
+                .dry_replace_plan
+                .clone()
+                .context("codewalker-test-run requires --dry-replace-plan")?;
+            let execution_gate_report = args
+                .execution_gate_report
+                .clone()
+                .context("codewalker-test-run requires --execution-gate-report")?;
+            // Real copied-archive test-run COORDINATOR. Plan mode (default) only
+            // validates every required input and builds a planned step sequence;
+            // it calls nothing, sends NO HTTP request, executes no external tool,
+            // parses no RPF internals, and NEVER modifies the target. Execute mode
+            // requires --execute plus the exact confirm phrase and every eligibility
+            // gate; only then does it invoke the existing replace apply (copied test
+            // archives only) and post-write verification. Never targets an original
+            // game archive, never rolls back automatically, never executes CodeWalker
+            // as a process. Global writerAllowed stays false; NullRpfAdapter active.
+            let report = codewalker_api::test_run::build_or_run_codewalker_copied_archive_test(
+                &target_rpf,
+                args.base_url.as_deref(),
+                &project_dir,
+                &backup_report,
+                &readiness_report,
+                &entry_manifest_report,
+                &resolve_report,
+                &dry_replace_plan,
+                &execution_gate_report,
+                args.compatibility_probe_report.as_deref(),
+                args.execute,
+                args.confirm.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
         _ => {
             usage();
             anyhow::bail!("unknown command: {}", args.command);
         }
     }
 
+    Ok(())
+}
+
+fn write_validation_result<T: Serialize>(out: Option<&PathBuf>, result: &T) -> Result<()> {
+    let json = serde_json::to_string_pretty(result)?;
+    if let Some(path) = out {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+        fs::write(path, json)?;
+        println!("Validation result written to: {}", path.display());
+    } else {
+        println!("{}", json);
+    }
     Ok(())
 }

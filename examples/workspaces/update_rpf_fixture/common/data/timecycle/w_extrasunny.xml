@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FIXTURE FILE — NOT real GTA data -->
+<Timecycle weather="extrasunny">
+  <sun intensity="1.0" />
+  <sky r="120" g="180" b="255" />
+</Timecycle>

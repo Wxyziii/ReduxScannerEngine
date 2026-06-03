@@ -11,6 +11,8 @@ redux_rpf_scanner            C++ CLI launcher
     ├── scans target files
     ├── hashes file data
     ├── compares clean vs modded
+    ├── validators/          Read-only syntax & scope checks (T0.3)
+    ├── editors/             Mutation framework & dry-run (T0.4.1)
     └── writes JSON
 ```
 
@@ -32,7 +34,7 @@ It should not implement the deep RPF logic.
 
 ## Rust backend responsibilities
 
-`rpf_backend_rs/src/main.rs` should:
+`rpf_backend_rs/src/main.rs` and its modules should:
 
 - open `update.rpf`
 - load GTA keys from a user-provided key directory
@@ -41,13 +43,16 @@ It should not implement the deep RPF logic.
 - hash selected file data
 - compare clean and modded manifests
 - classify changes into Redux components
+- **Validators (T0.3):** Perform read-only syntax (XML/DAT) and architectural scope validation.
+- **Editors (T0.4.1):** Provide a deterministic safety framework for future mutations, supporting dry-runs.
 - write stable JSON reports
 
-## Future deep analyzer architecture
+## Future deep analyzer and mutation architecture
 
 The scanner core finds **what files changed**.
-
-Format-specific analyzers later explain **what changed inside those files**:
+Validators ensure **safety and syntax**.
+Editors handle **deterministic mutations**.
+Format-specific analyzers explain **what changed inside those files**:
 
 ```text
 XML/timecycle analyzer

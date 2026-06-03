@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FIXTURE FILE — NOT real GTA data -->
+<TimecycleMods>
+  <Mod name="test_mod" type="color_like">
+    <sun r="255" g="255" b="255" />
+  </Mod>
+</TimecycleMods>

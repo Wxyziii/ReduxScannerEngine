@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "operations": [
+    {
+      "id": "op_binary",
+      "phase": "first_patch",
+      "path": "common/data/effects/ptfx.rpf/core.ytd",
+      "tool": "xml_timecycle_editor",
+      "type": "xml_color_like_candidate",
+      "intent": "Hypothesis: binary test.",
+      "validationRequired": ["xml_validator"]
+    }
+  ]
+}

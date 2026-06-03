@@ -1,6 +1,26 @@
 # Scanner v2 Roadmap
 
-## Phase 1 — Build and CLI foundation
+## Completed Milestones
+
+- **Phase 1: Build and CLI Foundation.** Versioning, tool validation, and mode support.
+- **Phase T0.1: Patch Plan Schema V1.** JSON structure for AI planning.
+- **Phase T0.2: Deterministic Safety Validator.** Verification of plan safety.
+- **Phase T0.3: XML/DAT Static Validators.** Rust-native syntax and scope checks.
+- **Phase T0.4.1: Editor Contract + Dry-Run.** Safety framework for mutations.
+
+## Active Phase: T0 — Controlled Patch Prototype
+
+Goal: Build the end-to-end safety and mutation framework for the first controlled patch.
+
+- [x] T0.1: Patch Plan Schema V1
+- [x] T0.2: Deterministic Safety Validator
+- [x] T0.3: XML/DAT Static Validators
+- [x] T0.4.1: Editor Contract + Dry-Run Framework
+- [ ] T0.4.2: XML/DAT Mutation Logic (Upcoming)
+- [ ] T0.4.3: Backup & Rollback Logic
+- [ ] T0.5: First Controlled Patch Application
+
+## Phase 1 — Build and CLI foundation (Legacy Roadmap)
 
 Goal: make the scanner easier to use, validate, and package.
 
