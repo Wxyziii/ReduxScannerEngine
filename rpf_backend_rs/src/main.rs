@@ -358,6 +358,8 @@ struct Args {
     base_url: Option<String>,
     project_dir: Option<PathBuf>,
     generate_script: bool,
+    search_filename: Option<String>,
+    check_replace_options: bool,
     changed_files: Vec<String>,
     operation_id: Option<String>,
 }
@@ -572,6 +574,19 @@ Commands:
                 internals, and NEVER modifies the target archive. Even when --execute
                 is given and --confirm matches, this milestone keeps executionPerformed
                 false and performs no automatic full execution. Exits 0.
+  codewalker-compat-probe [--base-url <url>] [--search-filename <name>]
+                [--check-replace-options] [--out <out.json>]
+                Live compatibility probe. Checks the shape/availability of the
+                CodeWalker.API endpoints a future live replace would need, using only
+                SAFE non-mutating requests: GET /, GET /api/service-status, GET
+                /api/search-file?filename=<name> (default visualsettings.dat), and —
+                only with --check-replace-options — a single HTTP OPTIONS on
+                /api/replace-file. It NEVER sends POST /api/replace-file, never calls
+                import/reload-services/set-config, never executes CodeWalker, never
+                parses RPF internals, and never modifies an archive. Records HTTP
+                statuses and response-shape samples (body sample capped at 2048 chars).
+                An offline server yields a valid offline report (exits 0).
+                writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -686,6 +701,8 @@ fn parse_args() -> Result<Args> {
         base_url: None,
         project_dir: None,
         generate_script: false,
+        search_filename: None,
+        check_replace_options: false,
         changed_files: Vec::new(),
         operation_id: None,
     };
@@ -875,6 +892,11 @@ fn parse_args() -> Result<Args> {
                 ))
             }
             "--generate-script" => args.generate_script = true,
+            "--search-filename" => {
+                args.search_filename =
+                    Some(it.next().context("missing value for --search-filename")?)
+            }
+            "--check-replace-options" => args.check_replace_options = true,
             "--execute" => args.execute = true,
             "--execute-rollback" => args.execute_rollback = true,
             "--confirm" => args.confirm = Some(it.next().context("missing value for --confirm")?),
@@ -11459,6 +11481,23 @@ fn main() -> Result<()> {
                 args.generate_script,
                 args.execute,
                 args.confirm.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-compat-probe" => {
+            // Live compatibility probe. Checks CodeWalker.API endpoint shapes/
+            // availability with ONLY safe non-mutating requests: GET /, GET
+            // /api/service-status, GET /api/search-file?filename=..., and (only with
+            // --check-replace-options) a single HTTP OPTIONS on /api/replace-file.
+            // Never sends POST /api/replace-file, never calls import/reload-services/
+            // set-config, never executes CodeWalker, never parses RPF internals, and
+            // never modifies an archive. Offline yields a valid offline report.
+            // writerAllowed stays false; NullRpfAdapter stays active. Exits 0.
+            let report = codewalker_api::compat_probe::probe_codewalker_live_compatibility(
+                args.base_url.as_deref(),
+                args.search_filename.as_deref(),
+                args.check_replace_options,
             )
             .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;

@@ -1,3 +1,4 @@
+pub mod compat_probe;
 pub mod detect;
 pub mod dry_replace;
 pub mod execution_gate;
@@ -9,6 +10,8 @@ pub mod replace_apply;
 pub mod rollback_restore;
 pub mod search;
 
+#[cfg(test)]
+mod compat_probe_tests;
 #[cfg(test)]
 mod dry_replace_tests;
 #[cfg(test)]

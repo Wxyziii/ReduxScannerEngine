@@ -251,6 +251,21 @@ target archive**. Even when `--execute` is given and `--confirm` matches, this
 milestone keeps `executionPerformed` false and performs no automatic full execution.
 See [T0_6_8_CODEWALKER_MANUAL_HARNESS.md](docs/T0_6_8_CODEWALKER_MANUAL_HARNESS.md) for details.
 
+### Phase T0.6.9 — CodeWalker Live Compatibility Probe
+`codewalker-compat-probe` performs **safe root/status/search/OPTIONS checks** against
+CodeWalker.API — **no replace POST, no archive mutation**. Before a real copied
+`update.rpf` replace, it checks whether the live CodeWalker.API instance supports the
+endpoint paths and request/response shapes the dry replace plan expects. It issues
+only `GET /`, `GET /api/service-status`, `GET /api/search-file?filename=<name>`
+(default `visualsettings.dat`), and — only with `--check-replace-options` — a single
+HTTP `OPTIONS /api/replace-file`. It **never** sends `POST /api/replace-file`, never
+calls import/reload-services/set-config, never executes CodeWalker, never parses RPF
+internals, and never modifies an archive. It records HTTP statuses and response-shape
+samples (body sample capped at 2048 chars) to discover real response shapes. An
+offline server yields a valid offline report. `writerAllowed` stays false and the
+active adapter stays `NullRpfAdapter`.
+See [T0_6_9_CODEWALKER_COMPAT_PROBE.md](docs/T0_6_9_CODEWALKER_COMPAT_PROBE.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

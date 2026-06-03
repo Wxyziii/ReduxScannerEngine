@@ -1437,3 +1437,169 @@ pub struct CodeWalkerManualHarnessReport {
     pub blocked_items: Vec<CodeWalkerManualHarnessBlockedItem>,
     pub summary: CodeWalkerManualHarnessSummary,
 }
+
+// ── T0.6.9: CodeWalker live compatibility probe ─────────────────────────────
+
+/// Overall verdict of a live compatibility probe.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerCompatibilityProbeStatus {
+    /// Root/status/search all answered with the expected shapes.
+    Compatible,
+    /// The server answered, but at least one expected shape was off.
+    PartiallyCompatible,
+    /// The server answered but did not look ready for the planned flow.
+    NotReady,
+    /// Nothing answered at the base URL.
+    Offline,
+    /// The provided base URL was not usable.
+    InvalidBaseUrl,
+}
+
+/// The mode the probe ran in.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerCompatibilityProbeMode {
+    /// Default: only GET root/status/search. Never touches the replace endpoint.
+    SafeDefault,
+    /// Adds a single non-mutating HTTP OPTIONS on the replace endpoint. Still no
+    /// POST and no mutation of any kind.
+    ExtendedNonMutating,
+}
+
+/// The named endpoints the probe knows how to (safely) observe.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerCompatibilityEndpoint {
+    Root,
+    ServiceStatus,
+    SearchFile,
+    /// Only ever probed with OPTIONS, never POST.
+    ReplaceFileOptions,
+}
+
+/// One safe observation of a single endpoint.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerCompatibilityObservation {
+    pub endpoint: CodeWalkerCompatibilityEndpoint,
+    pub url: String,
+    pub method: String,
+    pub called: bool,
+    pub http_status: Option<u16>,
+    /// A length-limited sample of the response body (never the full payload).
+    pub response_body_sample: Option<String>,
+    pub response_json_parse_success: bool,
+    pub response_shape: String,
+    pub safe_to_call_again: bool,
+    /// Always `false` — every endpoint the probe touches is non-mutating.
+    pub mutating: bool,
+    pub detail: Option<String>,
+}
+
+/// A compatibility-probe safety gate.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerCompatibilitySafetyGate {
+    pub name: String,
+    pub passed: bool,
+    pub severity: CodeWalkerApiSeverity,
+    pub message: String,
+}
+
+/// A reason the probe limited or could not complete a check.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerCompatibilityBlockedItem {
+    pub component: String,
+    pub reason: String,
+    pub block_type: String,
+}
+
+/// A non-fatal advisory.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerCompatibilityWarning {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerCompatibilitySummary {
+    pub total_gates: usize,
+    pub passed_gate_count: usize,
+    pub blocking_gate_count: usize,
+    pub warning_count: usize,
+    pub blocked_count: usize,
+    pub endpoints_observed: usize,
+    pub endpoints_reachable: usize,
+    pub mutation_endpoints_called: bool,
+    pub modifies_archive: bool,
+    pub writer_allowed: bool,
+}
+
+/// Live compatibility probe (T0.6.9). Checks the shape/availability of the
+/// CodeWalker.API endpoints a future live replace would need, using ONLY safe,
+/// non-mutating requests: GET `/`, GET `/api/service-status`, GET
+/// `/api/search-file?filename=...`, and (only when explicitly requested) a single
+/// HTTP OPTIONS on `/api/replace-file`. It NEVER sends POST `/api/replace-file`,
+/// never calls import/reload-services/set-config, never executes CodeWalker, never
+/// parses RPF internals, and never modifies an archive. An offline server yields a
+/// valid offline report rather than an error. `writer_allowed` stays `false` and
+/// the active adapter stays `NullRpfAdapter`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerCompatibilityProbeReport {
+    pub status: CodeWalkerCompatibilityProbeStatus,
+    pub probe_mode: CodeWalkerCompatibilityProbeMode,
+
+    pub base_url: String,
+    pub normalized_base_url: String,
+
+    // ── Root ────────────────────────────────────────────────────────────────
+    pub root_checked: bool,
+    pub root_http_status: Option<u16>,
+
+    // ── Service status ──────────────────────────────────────────────────────
+    pub service_status_checked: bool,
+    pub service_status_http_status: Option<u16>,
+    pub service_status_shape: String,
+
+    // ── Search ──────────────────────────────────────────────────────────────
+    pub search_probe_checked: bool,
+    pub search_probe_filename: String,
+    pub search_probe_http_status: Option<u16>,
+    pub search_response_shape: String,
+
+    // ── Replace endpoint (OPTIONS only, never POST) ─────────────────────────
+    pub replace_endpoint_options_checked: bool,
+    pub replace_endpoint_options_http_status: Option<u16>,
+    pub replace_endpoint_post_checked: bool,
+    pub replace_endpoint_post_sent: bool,
+
+    // ── Mutation safety mirror ──────────────────────────────────────────────
+    pub import_endpoint_called: bool,
+    pub reload_services_called: bool,
+    pub set_config_called: bool,
+    pub mutation_endpoints_called: bool,
+    pub external_tool_executed: bool,
+    pub modifies_archive: bool,
+    pub native_parser_used: bool,
+
+    // ── Verdicts (None == unknown) ──────────────────────────────────────────
+    pub compatible_for_search: Option<bool>,
+    pub compatible_for_dry_replace_planning: Option<bool>,
+    /// Always `false` this milestone — never proven live yet.
+    pub compatible_for_live_replace: bool,
+
+    pub writer_allowed: bool,
+    pub active_adapter_name: String,
+    pub null_adapter_active: bool,
+
+    pub observations: Vec<CodeWalkerCompatibilityObservation>,
+    pub gates: Vec<CodeWalkerCompatibilitySafetyGate>,
+    pub warnings: Vec<CodeWalkerCompatibilityWarning>,
+    pub blocked_items: Vec<CodeWalkerCompatibilityBlockedItem>,
+    pub summary: CodeWalkerCompatibilitySummary,
+}
