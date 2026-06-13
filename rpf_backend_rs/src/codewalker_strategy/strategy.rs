@@ -168,6 +168,12 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
             "Plan-first coordinator for a full copied-test replace cycle; execute mode gated, \
              no original archives.",
         ),
+        milestone(
+            "T0.6.11",
+            "CodeWalker Test Report Normalizer",
+            "Read-only summary of compatibility/readiness/resolve/dry-plan/gate/apply/verify/\
+             rollback reports; no pipeline run, no HTTP, no archive modification.",
+        ),
     ];
 
     // T0.6.0 (detection) and T0.6.1 (readiness) have shipped.
@@ -184,6 +190,7 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
             || m.id == "T0.6.8"
             || m.id == "T0.6.9"
             || m.id == "T0.6.10"
+            || m.id == "T0.6.11"
         {
             m.implemented = true;
         }
@@ -253,6 +260,9 @@ pub fn build_codewalker_strategy_report() -> Result<CodeWalkerStrategyReport, St
         // Real copied-archive test-run coordinator shipped (T0.6.10): plan-first,
         // execute mode gated, original game paths blocked, no auto rollback.
         codewalker_copied_archive_test_run_implemented: true,
+        // Read-only test report normalizer shipped (T0.6.11): folds the pipeline
+        // reports into one verdict; no pipeline run, no HTTP, no archive mutation.
+        codewalker_test_summary_implemented: true,
         codewalker_execution_implemented: false,
         codewalker_write_allowed_now: false,
         writer_allowed_now: false,

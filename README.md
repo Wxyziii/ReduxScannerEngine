@@ -280,6 +280,18 @@ CodeWalker is never executed as a process. Global `writerAllowed` stays false an
 active adapter stays `NullRpfAdapter`.
 See [T0_6_10_CODEWALKER_TEST_RUN.md](docs/T0_6_10_CODEWALKER_TEST_RUN.md) for details.
 
+### Phase T0.6.11 — CodeWalker Test Report Normalizer
+`codewalker-test-summary` is a **read-only summary** of the
+compatibility/readiness/resolve/dry-plan/gate/apply/verify/rollback reports. It reads
+whichever of those pipeline reports exist and folds them into one normalized verdict
+(final status plus next-step recommendations). It **does not run the pipeline**, never
+calls CodeWalker, sends no HTTP request, executes no external tool, parses no RPF
+internals, and modifies neither the archive nor the input reports. It is useful after a
+real copied-archive test to see, at a glance, how far the cycle got and what the next
+safe action is. Global `writerAllowed` stays false and the active adapter stays
+`NullRpfAdapter`.
+See [T0_6_11_CODEWALKER_TEST_SUMMARY.md](docs/T0_6_11_CODEWALKER_TEST_SUMMARY.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

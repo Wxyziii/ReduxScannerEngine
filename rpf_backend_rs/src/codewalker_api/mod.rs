@@ -10,6 +10,7 @@ pub mod replace_apply;
 pub mod rollback_restore;
 pub mod search;
 pub mod test_run;
+pub mod test_summary;
 
 #[cfg(test)]
 mod compat_probe_tests;
@@ -31,5 +32,7 @@ mod rollback_restore_tests;
 mod search_tests;
 #[cfg(test)]
 mod test_run_tests;
+#[cfg(test)]
+mod test_summary_tests;
 #[cfg(test)]
 mod tests;
