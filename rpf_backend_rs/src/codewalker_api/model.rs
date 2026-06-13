@@ -1491,6 +1491,13 @@ pub struct CodeWalkerCompatibilityObservation {
     pub response_body_sample: Option<String>,
     pub response_json_parse_success: bool,
     pub response_shape: String,
+    /// The socket address that actually connected (e.g. `127.0.0.1:5555`).
+    pub connected_address: Option<String>,
+    pub transfer_encoding: Option<String>,
+    pub content_length: Option<usize>,
+    /// How the body was extracted: content_length / chunked / connection_close /
+    /// empty / decode_failed / not_checked.
+    pub body_decode_mode: Option<String>,
     pub safe_to_call_again: bool,
     /// Always `false` — every endpoint the probe touches is non-mutating.
     pub mutating: bool,
@@ -1569,6 +1576,8 @@ pub struct CodeWalkerCompatibilityProbeReport {
     // ── Search ──────────────────────────────────────────────────────────────
     pub search_probe_checked: bool,
     pub search_probe_filename: String,
+    /// The query parameter name used for the search probe (real API: `fileName`).
+    pub search_query_parameter_used: String,
     pub search_probe_http_status: Option<u16>,
     pub search_response_shape: String,
 

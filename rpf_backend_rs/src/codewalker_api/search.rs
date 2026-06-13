@@ -4,7 +4,7 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::detect::http_get;
+use super::http_client::{http_get, url_encode};
 use super::model::*;
 use super::readiness::probe_codewalker_api_readiness;
 
@@ -13,6 +13,9 @@ use crate::rpf_adapter::null_adapter::NullRpfAdapter;
 
 /// The single read-only search endpoint used by this milestone.
 pub const SEARCH_ENDPOINT: &str = "/api/search-file";
+
+/// The real CodeWalker.API search query parameter (camelCase, as observed live).
+pub const SEARCH_QUERY_PARAM: &str = "fileName";
 
 // ── Tolerant views over existing JSON reports ───────────────────────────────
 
@@ -38,20 +41,6 @@ struct EntryView {
 #[serde(rename_all = "camelCase", default)]
 struct ReadinessReportView {
     codewalker_api_ready_for_search: bool,
-}
-
-/// Percent-encode a query-parameter value (unreserved chars pass through).
-fn url_encode(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 /// Normalize a result path: backslashes to forward slashes, trim. Case kept.
@@ -290,7 +279,10 @@ pub fn build_codewalker_search_resolve_report(
     for arp in &entries {
         let arp = normalize_path(arp);
         let filename = basename(&arp);
-        let search_url_path = format!("{SEARCH_ENDPOINT}?filename={}", url_encode(&filename));
+        let search_url_path = format!(
+            "{SEARCH_ENDPOINT}?{SEARCH_QUERY_PARAM}={}",
+            url_encode(&filename)
+        );
 
         let mut candidates: Vec<CodeWalkerSearchCandidate> = Vec::new();
 

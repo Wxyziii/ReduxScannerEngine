@@ -1,6 +1,7 @@
 use serde_json::Value;
 
-use super::detect::{detect_codewalker_api, http_get, SERVICE_STATUS_PATH};
+use super::detect::{detect_codewalker_api, SERVICE_STATUS_PATH};
+use super::http_client::http_get;
 use super::model::*;
 
 use crate::rpf_adapter::contract::RpfAdapter;

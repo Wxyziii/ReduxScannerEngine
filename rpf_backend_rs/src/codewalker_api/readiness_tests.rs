@@ -287,4 +287,68 @@ mod readiness_tests {
         let after = std::fs::read_dir(".").unwrap().count();
         assert_eq!(before, after);
     }
+
+    // ── Chunked-encoding mock (T0.6.12) ─────────────────────────────────────
+
+    /// Start a mock that replies with Transfer-Encoding: chunked, like the real
+    /// CodeWalker.API (Kestrel).
+    fn start_chunked(connections: usize) -> (MockServer, Receiver<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let requests_thread = Arc::clone(&requests);
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || {
+            let _ = ready_tx.send(());
+            for _ in 0..connections {
+                let (stream, _) = match listener.accept() {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                let mut parts = line.split_whitespace();
+                let method = parts.next().unwrap_or("?").to_string();
+                let path = parts.next().unwrap_or("/").to_string();
+                requests_thread
+                    .lock()
+                    .unwrap()
+                    .push(format!("{method} {path}"));
+                loop {
+                    let mut h = String::new();
+                    if reader.read_line(&mut h).is_err() || h == "\r\n" || h.is_empty() {
+                        break;
+                    }
+                }
+                let (status, body) = answer_ready(&path);
+                let chunked = format!("{:x}\r\n{}\r\n0\r\n\r\n", body.as_bytes().len(), body);
+                let resp = format!(
+                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{chunked}"
+                );
+                let mut stream = stream;
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        (
+            MockServer {
+                base_url: format!("http://{addr}"),
+                requests,
+                handle: Some(handle),
+            },
+            ready_rx,
+        )
+    }
+
+    #[test]
+    fn codewalker_readiness_parses_chunked_service_status() {
+        let (server, ready) = start_chunked(3);
+        ready.recv().unwrap();
+        let r = probe_codewalker_api_readiness(Some(&server.base_url)).unwrap();
+        assert!(r.service_status_json_parse_success);
+        assert_eq!(r.services_ready, Some(true));
+        assert!(r.codewalker_api_ready_for_search);
+        assert_eq!(r.status, CodeWalkerApiReadinessStatus::Ready);
+    }
 }

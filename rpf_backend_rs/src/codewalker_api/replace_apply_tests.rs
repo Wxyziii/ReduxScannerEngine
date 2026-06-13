@@ -580,4 +580,43 @@ mod replace_apply_tests {
         assert_eq!(std::fs::read(&s.target).unwrap(), before);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), count_before);
     }
+
+    // ── T0.6.12: shared HTTP client, gates unchanged ────────────────────────
+
+    #[test]
+    fn codewalker_replace_apply_uses_shared_client_without_changing_gates() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        // 1) Gates still required: without --execute, NO HTTP is sent (blocked),
+        //    even though the shared client now backs the POST path.
+        let s = eligible_setup(dir.path());
+        let blocked = apply_codewalker_replace_on_test_archive(
+            Some("http://127.0.0.1:1"),
+            &s.gate,
+            &s.plan,
+            false,
+            Some(CONFIRMATION_PHRASE),
+        )
+        .unwrap();
+        assert_eq!(blocked.status, CodeWalkerReplaceApplyStatus::Blocked);
+        assert!(!blocked.replace_requests_sent);
+
+        // 2) With every gate passing + execute + confirm, the shared client sends
+        //    exactly one POST /api/replace-file and records success.
+        let server = MockServer::start(1, 200, r#"{"ok":true}"#);
+        let executed = apply_codewalker_replace_on_test_archive(
+            Some(&server.base_url),
+            &s.gate,
+            &s.plan,
+            true,
+            Some(CONFIRMATION_PHRASE),
+        )
+        .unwrap();
+        assert_eq!(executed.status, CodeWalkerReplaceApplyStatus::Executed);
+        assert!(executed.replace_requests_sent);
+        let caps = server.captured();
+        assert_eq!(caps.len(), 1);
+        assert_eq!(caps[0].method, "POST");
+        assert_eq!(caps[0].path, "/api/replace-file");
+    }
 }

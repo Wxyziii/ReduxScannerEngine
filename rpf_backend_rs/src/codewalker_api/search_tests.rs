@@ -204,7 +204,7 @@ mod search_tests {
             .unwrap();
         let reqs = server.requests();
         assert!(
-            reqs.iter().any(|s| s.contains("filename=my%20file.ymt")),
+            reqs.iter().any(|s| s.contains("fileName=my%20file.ymt")),
             "encoded filename not seen: {reqs:?}"
         );
     }
@@ -416,5 +416,74 @@ mod search_tests {
                 .unwrap();
         let after = std::fs::read_dir(dir.path()).unwrap().count();
         assert_eq!(before, after);
+    }
+
+    // ── Chunked-encoding mock (T0.6.12) ─────────────────────────────────────
+
+    /// Mock that replies with Transfer-Encoding: chunked, like the real
+    /// CodeWalker.API. Returns the exact-match array for search-file.
+    fn start_chunked(connections: usize) -> (MockServer, Receiver<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let requests_thread = Arc::clone(&requests);
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || {
+            let _ = ready_tx.send(());
+            for _ in 0..connections {
+                let (stream, _) = match listener.accept() {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                let mut parts = line.split_whitespace();
+                let method = parts.next().unwrap_or("?").to_string();
+                let path = parts.next().unwrap_or("/").to_string();
+                requests_thread
+                    .lock()
+                    .unwrap()
+                    .push(format!("{method} {path}"));
+                loop {
+                    let mut h = String::new();
+                    if reader.read_line(&mut h).is_err() || h == "\r\n" || h.is_empty() {
+                        break;
+                    }
+                }
+                let (status, body) = answer_exact(&path);
+                let chunked = format!("{:x}\r\n{}\r\n0\r\n\r\n", body.as_bytes().len(), body);
+                let resp = format!(
+                    "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{chunked}"
+                );
+                let mut stream = stream;
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        (
+            MockServer {
+                base_url: format!("http://{addr}"),
+                requests,
+                handle: Some(handle),
+            },
+            ready_rx,
+        )
+    }
+
+    #[test]
+    fn codewalker_resolve_targets_parses_chunked_search_array() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manifest = write_manifest(&dir.path(), &[ARP]);
+        let (server, ready) = start_chunked(PROBE_CONNS + 1);
+        ready.recv().unwrap();
+        let r = build_codewalker_search_resolve_report(&manifest, Some(&server.base_url), None)
+            .unwrap();
+        assert_eq!(r.status, CodeWalkerSearchResolveStatus::Completed);
+        assert_eq!(r.resolved_targets.len(), 1);
+        assert_eq!(r.resolved_targets[0].selected_candidate, ARP);
+        // The search used the real `fileName` query parameter.
+        let reqs = server.requests();
+        assert!(reqs.iter().any(|s| s.contains("fileName=")));
     }
 }
