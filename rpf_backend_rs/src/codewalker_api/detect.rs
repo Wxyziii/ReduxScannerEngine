@@ -1,7 +1,4 @@
-use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::Duration;
-
+use super::http_client::{base_url_valid, http_get, normalize_base_url};
 use super::model::*;
 
 use crate::rpf_adapter::contract::RpfAdapter;
@@ -12,99 +9,6 @@ pub const DEFAULT_BASE_URL: &str = "http://localhost:5555";
 
 /// Read-only status endpoint exposed by CodeWalker.API.
 pub const SERVICE_STATUS_PATH: &str = "/api/service-status";
-
-/// Timeout for each detection probe. Short — detection must not block long.
-const PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
-
-/// Minimal HTTP GET response (status line + body) captured by the detector.
-pub(crate) struct HttpResponse {
-    pub(crate) status: u16,
-    pub(crate) body: String,
-}
-
-/// Strip trailing slashes from a base URL (keep the scheme's `//`).
-fn normalize_base_url(raw: &str) -> String {
-    let trimmed = raw.trim();
-    let no_trailing = trimmed.trim_end_matches('/');
-    if no_trailing.is_empty() {
-        trimmed.to_string()
-    } else {
-        no_trailing.to_string()
-    }
-}
-
-/// A base URL is usable only if it is an `http://`/`https://` URL with a host.
-fn base_url_valid(normalized: &str) -> bool {
-    let rest = match normalized.strip_prefix("http://") {
-        Some(r) => r,
-        None => match normalized.strip_prefix("https://") {
-            Some(r) => r,
-            None => return false,
-        },
-    };
-    let authority = rest.split('/').next().unwrap_or("");
-    let host = authority.split(':').next().unwrap_or("");
-    !host.is_empty()
-}
-
-/// Parse the numeric status code from an HTTP status line ("HTTP/1.1 200 OK").
-fn parse_status_line(text: &str) -> Option<u16> {
-    let first = text.lines().next()?;
-    let mut parts = first.split_whitespace();
-    let _http = parts.next()?;
-    parts.next()?.parse::<u16>().ok()
-}
-
-/// Perform a single safe HTTP GET. Only `http://` is dialed (no TLS in std);
-/// `https://` URLs are reported unreachable rather than handled insecurely.
-pub(crate) fn http_get(url: &str) -> Result<HttpResponse, String> {
-    let rest = url
-        .strip_prefix("http://")
-        .ok_or_else(|| "only http:// is supported for detection".to_string())?;
-
-    let (authority, path) = match rest.find('/') {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => (rest, "/"),
-    };
-    let (host, port) = match authority.rfind(':') {
-        Some(i) => {
-            let p = authority[i + 1..]
-                .parse::<u16>()
-                .map_err(|_| "invalid port in base URL".to_string())?;
-            (&authority[..i], p)
-        }
-        None => (authority, 80u16),
-    };
-
-    let addr = (host, port)
-        .to_socket_addrs()
-        .map_err(|e| format!("address resolution failed: {e}"))?
-        .next()
-        .ok_or_else(|| "no socket address resolved".to_string())?;
-
-    let mut stream = TcpStream::connect_timeout(&addr, PROBE_TIMEOUT)
-        .map_err(|e| format!("connect failed: {e}"))?;
-    stream.set_read_timeout(Some(PROBE_TIMEOUT)).ok();
-    stream.set_write_timeout(Some(PROBE_TIMEOUT)).ok();
-
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: rpf_scanner-codewalker-detect\r\nAccept: */*\r\nConnection: close\r\n\r\n"
-    );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|e| format!("request write failed: {e}"))?;
-
-    let mut buf = Vec::new();
-    stream
-        .read_to_end(&mut buf)
-        .map_err(|e| format!("response read failed: {e}"))?;
-
-    let text = String::from_utf8_lossy(&buf).to_string();
-    let status = parse_status_line(&text).ok_or_else(|| "no HTTP status line".to_string())?;
-    let body = text.splitn(2, "\r\n\r\n").nth(1).unwrap_or("").to_string();
-
-    Ok(HttpResponse { status, body })
-}
 
 /// Decide whether a service-status body clearly reports readiness. Conservative:
 /// only a parseable JSON object with an explicit ready signal counts.

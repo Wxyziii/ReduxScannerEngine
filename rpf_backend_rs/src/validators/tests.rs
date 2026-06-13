@@ -67,41 +67,70 @@ mod tests {
         assert!(result.errors.iter().any(|e| e.contains("UnknownFamily")));
     }
 
+    // ── Scope-validator fixtures ────────────────────────────────────────────
+    //
+    // The scope tests use a small, synthetic PatchPlan written to a temp file
+    // inside the test. This keeps them fully self-contained: no absolute local
+    // paths, no AI-generated patch plans, no external/AI-tester dependency, no
+    // real GTA files. The plan is entirely fake and matches the controlled
+    // first-patch scope the validator expects.
+
+    fn write_synthetic_patch_plan() -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        let unique = format!(
+            "rpf_scope_plan_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        dir.push(unique);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("synthetic.patch_plan.json");
+        // `filePath` (camelCase) matches the PatchOperation contract. The plan
+        // covers every file the scope tests reference so each maps to its own
+        // error branch rather than "unexpected file".
+        let plan = r#"{
+  "schemaVersion": "1.0",
+  "operations": [
+    { "id": "op1", "filePath": "common/data/visualsettings.dat", "operationType": "dat_edit" },
+    { "id": "op2", "filePath": "common/data/timecycle/cloudkeyframes.xml", "operationType": "xml_color" },
+    { "id": "op3", "filePath": "common/data/timecycle/timecycle_mods_1.xml", "operationType": "xml_color" }
+  ],
+  "targetFiles": [
+    "visualsettings.dat",
+    "cloudkeyframes.xml",
+    "timecycle_mods_1.xml",
+    "weather.xml",
+    "w_foggy.xml",
+    "timecycle_mods_3.xml",
+    "some_texture.ytd",
+    "update.rpf",
+    "tracer_effect.xml"
+  ]
+}"#;
+        std::fs::write(&path, plan).unwrap();
+        path
+    }
+
     #[test]
     fn test_scope_valid() {
-        let plan = {
-            let abs = PathBuf::from(
-                r"C:\Users\Marcel\Downloads\valid_dark_grey_cloudy_sky_qwen.patch_plan.json",
-            );
-            if abs.exists() {
-                abs
-            } else {
-                Path::new("../examples/validator_fixtures/valid_dark_grey_cloudy_sky_qwen.patch_plan.json").to_path_buf()
-            }
-        };
+        let plan = write_synthetic_patch_plan();
         let changed = vec![
             "visualsettings.dat".to_string(),
             "cloudkeyframes.xml".to_string(),
             "timecycle_mods_1.xml".to_string(),
         ];
         let result = validate_scope(plan.as_path(), &changed);
-        assert!(result.ok);
+        assert!(result.ok, "Expected PASS; errors: {:?}", result.errors);
         assert_eq!(result.summary.unexpectedFileCount, 0);
         assert_eq!(result.summary.blockedFileChangedCount, 0);
     }
 
     #[test]
     fn test_scope_invalid_weather() {
-        let plan = {
-            let abs = PathBuf::from(
-                r"C:\Users\Marcel\Downloads\valid_dark_grey_cloudy_sky_qwen.patch_plan.json",
-            );
-            if abs.exists() {
-                abs
-            } else {
-                Path::new("../examples/validator_fixtures/valid_dark_grey_cloudy_sky_qwen.patch_plan.json").to_path_buf()
-            }
-        };
+        let plan = write_synthetic_patch_plan();
         let changed = vec!["weather.xml".to_string()];
         let result = validate_scope(plan.as_path(), &changed);
         assert!(!result.ok);
@@ -110,49 +139,35 @@ mod tests {
 
     #[test]
     fn test_scope_unexpected_file() {
-        let plan = {
-            let abs = PathBuf::from(
-                r"C:\Users\Marcel\Downloads\valid_dark_grey_cloudy_sky_qwen.patch_plan.json",
-            );
-            if abs.exists() {
-                abs
-            } else {
-                Path::new("../examples/validator_fixtures/valid_dark_grey_cloudy_sky_qwen.patch_plan.json").to_path_buf()
-            }
-        };
+        let plan = write_synthetic_patch_plan();
         let changed = vec!["visualsettings.dat".to_string(), "unknown.xml".to_string()];
         let result = validate_scope(plan.as_path(), &changed);
         assert!(!result.ok);
         assert!(result.summary.unexpectedFileCount > 0);
     }
 
-    // T0.3 regression tests using the user's patch plan path (absolute). These verify the
-    // seven scenarios from the reported manual tests. These are intended for local/dev
-    // verification and require the patch plan to be present at the given absolute path.
+    // T0.3 regression tests: the seven manual-test scenarios, run against the
+    // synthetic in-repo plan above. No machine-specific path is required.
 
     #[test]
-    fn regression_t0_3_valid_first_patch_absolute_plan() {
-        let plan =
-            Path::new(r"C:\Users\Marcel\Downloads\valid_dark_grey_cloudy_sky_qwen.patch_plan.json");
-        assert!(plan.exists(), "Patch plan isn't present at {:?}", plan);
+    fn regression_t0_3_valid_first_patch() {
+        let plan = write_synthetic_patch_plan();
         let changed = vec![
             "visualsettings.dat".to_string(),
             "cloudkeyframes.xml".to_string(),
             "timecycle_mods_1.xml".to_string(),
         ];
-        let result = validate_scope(plan, &changed);
+        let result = validate_scope(plan.as_path(), &changed);
         assert!(result.ok, "Expected PASS; errors: {:?}", result.errors);
         assert_eq!(result.summary.unexpectedFileCount, 0);
         assert_eq!(result.summary.blockedFileChangedCount, 0);
     }
 
     #[test]
-    fn regression_t0_3_phase_1_2_fail_absolute_plan() {
-        let plan =
-            Path::new(r"C:\Users\Marcel\Downloads\valid_dark_grey_cloudy_sky_qwen.patch_plan.json");
-        assert!(plan.exists(), "Patch plan isn't present at {:?}", plan);
+    fn regression_t0_3_phase_1_2_fail() {
+        let plan = write_synthetic_patch_plan();
         let changed = vec!["visualsettings.dat".to_string(), "w_foggy.xml".to_string()];
-        let result = validate_scope(plan, &changed);
+        let result = validate_scope(plan.as_path(), &changed);
         assert!(!result.ok, "Expected FAIL for w_foggy.xml; got ok");
         assert!(
             result
@@ -165,12 +180,10 @@ mod tests {
     }
 
     #[test]
-    fn regression_t0_3_deferred_global_fail_absolute_plan() {
-        let plan =
-            Path::new(r"C:\Users\Marcel\Downloads\valid_dark_grey_cloudy_sky_qwen.patch_plan.json");
-        assert!(plan.exists(), "Patch plan isn't present at {:?}", plan);
+    fn regression_t0_3_deferred_global_fail() {
+        let plan = write_synthetic_patch_plan();
         let changed = vec!["weather.xml".to_string()];
-        let result = validate_scope(plan, &changed);
+        let result = validate_scope(plan.as_path(), &changed);
         assert!(!result.ok, "Expected FAIL for weather.xml; got ok");
         assert!(
             result
@@ -183,12 +196,10 @@ mod tests {
     }
 
     #[test]
-    fn regression_t0_3_blocked_file_fail_absolute_plan() {
-        let plan =
-            Path::new(r"C:\Users\Marcel\Downloads\valid_dark_grey_cloudy_sky_qwen.patch_plan.json");
-        assert!(plan.exists(), "Patch plan isn't present at {:?}", plan);
+    fn regression_t0_3_blocked_file_fail() {
+        let plan = write_synthetic_patch_plan();
         let changed = vec!["timecycle_mods_3.xml".to_string()];
-        let result = validate_scope(plan, &changed);
+        let result = validate_scope(plan.as_path(), &changed);
         assert!(!result.ok, "Expected FAIL for timecycle_mods_3.xml; got ok");
         assert!(
             result
@@ -201,15 +212,13 @@ mod tests {
     }
 
     #[test]
-    fn regression_t0_3_binary_file_fail_absolute_plan() {
-        let plan =
-            Path::new(r"C:\Users\Marcel\Downloads\valid_dark_grey_cloudy_sky_qwen.patch_plan.json");
-        assert!(plan.exists(), "Patch plan isn't present at {:?}", plan);
+    fn regression_t0_3_binary_file_fail() {
+        let plan = write_synthetic_patch_plan();
         let changed = vec![
             "cloudkeyframes.xml".to_string(),
             "some_texture.ytd".to_string(),
         ];
-        let result = validate_scope(plan, &changed);
+        let result = validate_scope(plan.as_path(), &changed);
         assert!(!result.ok, "Expected FAIL for some_texture.ytd; got ok");
         assert!(
             result
@@ -222,12 +231,10 @@ mod tests {
     }
 
     #[test]
-    fn regression_t0_3_rpf_archive_fail_absolute_plan() {
-        let plan =
-            Path::new(r"C:\Users\Marcel\Downloads\valid_dark_grey_cloudy_sky_qwen.patch_plan.json");
-        assert!(plan.exists(), "Patch plan isn't present at {:?}", plan);
+    fn regression_t0_3_rpf_archive_fail() {
+        let plan = write_synthetic_patch_plan();
         let changed = vec!["update.rpf".to_string()];
-        let result = validate_scope(plan, &changed);
+        let result = validate_scope(plan.as_path(), &changed);
         assert!(!result.ok, "Expected FAIL for update.rpf; got ok");
         assert!(
             result
@@ -240,12 +247,10 @@ mod tests {
     }
 
     #[test]
-    fn regression_t0_3_unrelated_component_fail_absolute_plan() {
-        let plan =
-            Path::new(r"C:\Users\Marcel\Downloads\valid_dark_grey_cloudy_sky_qwen.patch_plan.json");
-        assert!(plan.exists(), "Patch plan isn't present at {:?}", plan);
+    fn regression_t0_3_unrelated_component_fail() {
+        let plan = write_synthetic_patch_plan();
         let changed = vec!["tracer_effect.xml".to_string()];
-        let result = validate_scope(plan, &changed);
+        let result = validate_scope(plan.as_path(), &changed);
         assert!(!result.ok, "Expected FAIL for tracer_effect.xml; got ok");
         assert!(
             result

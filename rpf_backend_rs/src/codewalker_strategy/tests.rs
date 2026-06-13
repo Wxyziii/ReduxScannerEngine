@@ -56,6 +56,7 @@ mod tests {
         assert!(r.codewalker_manual_harness_implemented);
         assert!(r.codewalker_compatibility_probe_implemented);
         assert!(r.codewalker_copied_archive_test_run_implemented);
+        assert!(r.codewalker_test_summary_implemented);
     }
 
     #[test]

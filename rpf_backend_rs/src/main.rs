@@ -353,6 +353,7 @@ struct Args {
     compatibility_probe_report: Option<PathBuf>,
     replace_apply_report: Option<PathBuf>,
     post_write_verify_report: Option<PathBuf>,
+    rollback_restore_report: Option<PathBuf>,
     execute: bool,
     execute_rollback: bool,
     confirm: Option<String>,
@@ -604,6 +605,18 @@ Commands:
                 archives only — original game paths are blocked. Never rolls back
                 automatically, never executes CodeWalker as a process. Global
                 writerAllowed stays false and NullRpfAdapter stays active. Exits 0.
+  codewalker-test-summary [--compatibility-probe-report <path>] [--readiness-report <path>]
+                [--resolve-report <path>] [--dry-replace-plan <path>]
+                [--execution-gate-report <path>] [--replace-apply-report <path>]
+                [--post-write-verify-report <path>] [--rollback-restore-report <path>]
+                [--out <out.json>]
+                Read-only CodeWalker test report NORMALIZER. Reads whichever of the
+                above pipeline reports exist and folds them into one normalized
+                verdict (final status + next-step recommendations). It does NOT run
+                the pipeline, never calls CodeWalker, sends NO HTTP request, executes
+                no external tool, parses no RPF internals, and modifies neither the
+                archive nor the input reports. Global writerAllowed stays false and
+                NullRpfAdapter stays active. Exits 0.
   editor-dry-run --patch-plan <path> [--operation-id <id>] [--out <out.json>]
   version
 
@@ -713,6 +726,7 @@ fn parse_args() -> Result<Args> {
         compatibility_probe_report: None,
         replace_apply_report: None,
         post_write_verify_report: None,
+        rollback_restore_report: None,
         execute: false,
         execute_rollback: false,
         confirm: None,
@@ -908,6 +922,12 @@ fn parse_args() -> Result<Args> {
                 args.post_write_verify_report = Some(PathBuf::from(
                     it.next()
                         .context("missing value for --post-write-verify-report")?,
+                ))
+            }
+            "--rollback-restore-report" => {
+                args.rollback_restore_report = Some(PathBuf::from(
+                    it.next()
+                        .context("missing value for --rollback-restore-report")?,
                 ))
             }
             "--project-dir" => {
@@ -11581,6 +11601,26 @@ fn main() -> Result<()> {
                 args.compatibility_probe_report.as_deref(),
                 args.execute,
                 args.confirm.as_deref(),
+            )
+            .map_err(anyhow::Error::msg)?;
+            write_validation_result(args.out.as_ref(), &report)?;
+        }
+        "codewalker-test-summary" => {
+            // Read-only NORMALIZER. Reads whichever existing pipeline reports were
+            // provided and folds them into one verdict plus next-step
+            // recommendations. It does NOT run the pipeline, never calls
+            // CodeWalker, sends NO HTTP request, executes no external tool, parses
+            // no RPF internals, and modifies neither the archive nor the input
+            // reports. Global writerAllowed stays false; NullRpfAdapter active.
+            let report = codewalker_api::test_summary::build_codewalker_test_summary_report(
+                args.compatibility_probe_report.as_deref(),
+                args.readiness_report.as_deref(),
+                args.resolve_report.as_deref(),
+                args.dry_replace_plan.as_deref(),
+                args.execution_gate_report.as_deref(),
+                args.replace_apply_report.as_deref(),
+                args.post_write_verify_report.as_deref(),
+                args.rollback_restore_report.as_deref(),
             )
             .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;

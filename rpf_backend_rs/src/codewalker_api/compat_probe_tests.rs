@@ -354,4 +354,137 @@ mod compat_probe_tests {
             .collect();
         assert_eq!(before.len(), after.len());
     }
+
+    // ── Chunked-encoding mock (T0.6.12) ─────────────────────────────────────
+    //
+    // The real CodeWalker.API (Kestrel) returns Transfer-Encoding: chunked. This
+    // mock replies chunked so the probe's shared client must de-chunk to parse.
+
+    fn chunk_wrap(body: &str) -> String {
+        format!("{:x}\r\n{}\r\n0\r\n\r\n", body.as_bytes().len(), body)
+    }
+
+    struct ChunkedMock {
+        base_url: String,
+        handle: Option<JoinHandle<()>>,
+    }
+
+    impl ChunkedMock {
+        fn start(connections: usize) -> ChunkedMock {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let handle = std::thread::spawn(move || {
+                for _ in 0..connections {
+                    let (mut stream, _) = match listener.accept() {
+                        Ok(s) => s,
+                        Err(_) => break,
+                    };
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut line = String::new();
+                    let _ = reader.read_line(&mut line);
+                    let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    // Drain headers.
+                    loop {
+                        let mut h = String::new();
+                        if reader.read_line(&mut h).is_err() || h == "\r\n" || h.is_empty() {
+                            break;
+                        }
+                    }
+                    let (status, body): (u16, String) = if path.starts_with("/api/service-status") {
+                        (200, r#"{"gtaPath":"X","servicesReady":true}"#.to_string())
+                    } else if path.starts_with("/api/search-file") {
+                        (
+                            200,
+                            r#"["update/update.rpf/common/data/visualsettings.dat"]"#.to_string(),
+                        )
+                    } else if path == "/" {
+                        (200, r#"{"name":"CodeWalker.API"}"#.to_string())
+                    } else if path.starts_with("/api/replace-file") {
+                        (405, "{}".to_string())
+                    } else {
+                        (404, "{}".to_string())
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {status} OK\r\nContent-Type: application/json; charset=utf-8\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n{}",
+                        chunk_wrap(&body)
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                    let _ = stream.flush();
+                }
+            });
+            ChunkedMock {
+                base_url: format!("http://{addr}"),
+                handle: Some(handle),
+            }
+        }
+    }
+
+    impl Drop for ChunkedMock {
+        fn drop(&mut self) {
+            if let Some(h) = self.handle.take() {
+                let _ = h.join();
+            }
+        }
+    }
+
+    #[test]
+    fn codewalker_compat_probe_parses_chunked_service_status() {
+        let server = ChunkedMock::start(3);
+        let r = probe_codewalker_live_compatibility(Some(&server.base_url), None, false).unwrap();
+        assert_eq!(r.service_status_shape, "json_object");
+        let obs = r
+            .observations
+            .iter()
+            .find(|o| o.url.contains("/api/service-status"))
+            .unwrap();
+        assert_eq!(obs.body_decode_mode.as_deref(), Some("chunked"));
+        assert!(obs.response_json_parse_success);
+    }
+
+    #[test]
+    fn codewalker_compat_probe_parses_chunked_search_array() {
+        let server = ChunkedMock::start(3);
+        let r = probe_codewalker_live_compatibility(Some(&server.base_url), None, false).unwrap();
+        assert_eq!(r.search_response_shape, "json_array");
+        assert_eq!(r.compatible_for_search, Some(true));
+        assert_eq!(r.status, CodeWalkerCompatibilityProbeStatus::Compatible);
+    }
+
+    #[test]
+    fn codewalker_compat_probe_uses_fileName_query_param() {
+        let server = MockServer::start(3, 200, SEARCH_ARRAY.to_string());
+        let r = probe_codewalker_live_compatibility(
+            Some(&server.base_url),
+            Some("visualsettings.dat"),
+            false,
+        )
+        .unwrap();
+        assert_eq!(r.search_query_parameter_used, "fileName");
+        let search = server
+            .captured()
+            .into_iter()
+            .find(|c| c.path.starts_with("/api/search-file"))
+            .unwrap();
+        assert!(
+            search.path.contains("fileName=visualsettings.dat"),
+            "path: {}",
+            search.path
+        );
+    }
+
+    #[test]
+    fn codewalker_compat_probe_does_not_call_import_reload_or_set_config() {
+        let server = MockServer::start(4, 200, SEARCH_ARRAY.to_string());
+        let r = probe_codewalker_live_compatibility(Some(&server.base_url), None, true).unwrap();
+        assert!(!r.import_endpoint_called);
+        assert!(!r.reload_services_called);
+        assert!(!r.set_config_called);
+        let reqs = server.captured();
+        assert!(reqs.iter().all(|c| !c.path.starts_with("/api/import")));
+        assert!(reqs
+            .iter()
+            .all(|c| !c.path.starts_with("/api/reload-services")));
+        assert!(reqs.iter().all(|c| !c.path.starts_with("/api/set-config")));
+        assert!(reqs.iter().all(|c| c.method != "POST"));
+    }
 }

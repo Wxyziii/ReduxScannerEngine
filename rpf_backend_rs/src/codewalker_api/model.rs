@@ -1491,6 +1491,13 @@ pub struct CodeWalkerCompatibilityObservation {
     pub response_body_sample: Option<String>,
     pub response_json_parse_success: bool,
     pub response_shape: String,
+    /// The socket address that actually connected (e.g. `127.0.0.1:5555`).
+    pub connected_address: Option<String>,
+    pub transfer_encoding: Option<String>,
+    pub content_length: Option<usize>,
+    /// How the body was extracted: content_length / chunked / connection_close /
+    /// empty / decode_failed / not_checked.
+    pub body_decode_mode: Option<String>,
     pub safe_to_call_again: bool,
     /// Always `false` — every endpoint the probe touches is non-mutating.
     pub mutating: bool,
@@ -1569,6 +1576,8 @@ pub struct CodeWalkerCompatibilityProbeReport {
     // ── Search ──────────────────────────────────────────────────────────────
     pub search_probe_checked: bool,
     pub search_probe_filename: String,
+    /// The query parameter name used for the search probe (real API: `fileName`).
+    pub search_query_parameter_used: String,
     pub search_probe_http_status: Option<u16>,
     pub search_response_shape: String,
 
@@ -1796,4 +1805,145 @@ pub struct CodeWalkerTestRunReport {
     pub warnings: Vec<CodeWalkerTestRunWarning>,
     pub blocked_items: Vec<CodeWalkerTestRunBlockedItem>,
     pub summary: CodeWalkerTestRunSummary,
+}
+
+// ── T0.6.11: CodeWalker test report normalizer ───────────────────────────────
+
+/// The single normalized verdict of a copied-archive CodeWalker test run, derived
+/// purely from reading the many pipeline reports.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerTestSummaryStatus {
+    /// No meaningful pipeline progress is evident from the available reports.
+    NotRun,
+    /// Some reports are present but the picture is incomplete.
+    IncompleteReports,
+    /// The execution gate is eligible and no replace was attempted yet.
+    ReadyForExecute,
+    /// A replace was attempted, it failed, and the target did not change.
+    ExecutionFailedNoChange,
+    /// A replace succeeded and the target hash changed — expected success.
+    ExecutionSucceededChanged,
+    /// Post-write verification flagged a suspicious result.
+    ExecutionSuspicious,
+    /// A rollback plan exists but rollback was not executed.
+    RollbackAvailable,
+    /// A rollback restore report says the backup was restored.
+    RollbackRestored,
+    /// State could not be classified from the available reports.
+    Unknown,
+}
+
+/// One pipeline phase, summarized from the report that backs it. `ok` is a
+/// tri-state: `Some(true)`/`Some(false)`/`None` (unknown).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestSummaryPhase {
+    pub name: String,
+    pub report_path: Option<String>,
+    pub report_provided: bool,
+    pub report_loaded: bool,
+    pub ok: Option<bool>,
+    pub message: String,
+}
+
+/// A human-readable observation extracted from the reports.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestSummaryFinding {
+    pub code: String,
+    pub severity: CodeWalkerApiSeverity,
+    pub message: String,
+}
+
+/// A recommended next safe action.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestSummaryRecommendation {
+    pub code: String,
+    pub message: String,
+}
+
+/// A reason something remains blocked (standing, read-only facts).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestSummaryBlockedItem {
+    pub component: String,
+    pub reason: String,
+    pub block_type: String,
+}
+
+/// A non-fatal advisory raised while reading the reports.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestSummaryWarning {
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestSummarySummary {
+    pub reports_provided: usize,
+    pub reports_loaded: usize,
+    pub phase_count: usize,
+    pub finding_count: usize,
+    pub warning_count: usize,
+    pub blocked_count: usize,
+    pub recommendation_count: usize,
+    pub final_status: CodeWalkerTestSummaryStatus,
+}
+
+/// Read-only normalized summary of a copied-archive CodeWalker test run. It only
+/// reads existing pipeline report files and folds them into one verdict plus
+/// next-step recommendations. It NEVER calls CodeWalker, sends an HTTP request,
+/// executes an external tool, parses RPF internals, or modifies any archive or
+/// input report. Global `writerAllowed` stays `false`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerTestSummaryReport {
+    pub final_status: CodeWalkerTestSummaryStatus,
+
+    pub target_rpf: Option<String>,
+    pub base_url: Option<String>,
+
+    // ── Input report paths (whichever were provided) ────────────────────────
+    pub compatibility_probe_report_path: Option<String>,
+    pub readiness_report_path: Option<String>,
+    pub resolve_report_path: Option<String>,
+    pub dry_replace_plan_path: Option<String>,
+    pub execution_gate_report_path: Option<String>,
+    pub replace_apply_report_path: Option<String>,
+    pub post_write_verify_report_path: Option<String>,
+    pub rollback_restore_report_path: Option<String>,
+
+    pub phases: Vec<CodeWalkerTestSummaryPhase>,
+    pub findings: Vec<CodeWalkerTestSummaryFinding>,
+    pub warnings: Vec<CodeWalkerTestSummaryWarning>,
+    pub blocked_items: Vec<CodeWalkerTestSummaryBlockedItem>,
+    pub recommendations: Vec<CodeWalkerTestSummaryRecommendation>,
+
+    // ── Tri-state pipeline facts (None == unknown) ──────────────────────────
+    pub codewalker_reachable: Option<bool>,
+    pub compatibility_probe_ok: Option<bool>,
+    pub readiness_ok: Option<bool>,
+    pub targets_resolved: Option<bool>,
+    pub dry_plan_valid: Option<bool>,
+    pub execution_gate_eligible: Option<bool>,
+    pub replace_attempted: Option<bool>,
+    pub replace_succeeded: Option<bool>,
+    pub target_hash_changed: Option<bool>,
+    pub post_write_verified: Option<bool>,
+    pub post_write_suspicious: Option<bool>,
+    pub rollback_available: Option<bool>,
+    pub rollback_executed: Option<bool>,
+
+    // ── Standing read-only guarantees ───────────────────────────────────────
+    pub no_http_requests_sent_by_summary: bool,
+    pub no_archive_modified_by_summary: bool,
+    pub native_parser_used: bool,
+    pub external_tool_executed: bool,
+    pub writer_allowed_global: bool,
+
+    pub summary: CodeWalkerTestSummarySummary,
 }

@@ -1,8 +1,9 @@
-use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::Duration;
-
+use super::http_client::{
+    base_url_valid, classify_shape, http_get, http_options, normalize_base_url, sample_body,
+    url_encode,
+};
 use super::model::*;
+use super::search::{SEARCH_ENDPOINT, SEARCH_QUERY_PARAM};
 
 use crate::rpf_adapter::contract::RpfAdapter;
 use crate::rpf_adapter::null_adapter::NullRpfAdapter;
@@ -14,150 +15,10 @@ pub const DEFAULT_BASE_URL: &str = "http://localhost:5555";
 pub const DEFAULT_SEARCH_FILENAME: &str = "visualsettings.dat";
 
 const SERVICE_STATUS_PATH: &str = "/api/service-status";
-const SEARCH_ENDPOINT: &str = "/api/search-file";
 const REPLACE_ENDPOINT: &str = "/api/replace-file";
 
 /// Maximum stored response-body sample length, in chars.
 const MAX_BODY_SAMPLE: usize = 2048;
-
-/// Per-probe timeout. Short — a compatibility probe must not block long.
-const PROBE_TIMEOUT: Duration = Duration::from_millis(1500);
-
-struct HttpResponse {
-    status: u16,
-    body: String,
-}
-
-/// Strip trailing slashes from a base URL (keep the scheme's `//`).
-fn normalize_base_url(raw: &str) -> String {
-    let trimmed = raw.trim();
-    let no_trailing = trimmed.trim_end_matches('/');
-    if no_trailing.is_empty() {
-        trimmed.to_string()
-    } else {
-        no_trailing.to_string()
-    }
-}
-
-/// A base URL is usable only if it is an `http://`/`https://` URL with a host.
-fn base_url_valid(normalized: &str) -> bool {
-    let rest = match normalized.strip_prefix("http://") {
-        Some(r) => r,
-        None => match normalized.strip_prefix("https://") {
-            Some(r) => r,
-            None => return false,
-        },
-    };
-    let authority = rest.split('/').next().unwrap_or("");
-    let host = authority.split(':').next().unwrap_or("");
-    !host.is_empty()
-}
-
-/// Percent-encode a query-parameter value (unreserved chars pass through).
-fn url_encode(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for b in value.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-fn parse_status_line(text: &str) -> Option<u16> {
-    let first = text.lines().next()?;
-    let mut parts = first.split_whitespace();
-    let _http = parts.next()?;
-    parts.next()?.parse::<u16>().ok()
-}
-
-/// Perform a single safe HTTP request with the given method. Only `http://` is
-/// dialed (no TLS in std). `method` is restricted by the caller to GET/OPTIONS —
-/// this probe never issues POST or any mutating method.
-fn http_request(method: &str, url: &str) -> Result<HttpResponse, String> {
-    let rest = url
-        .strip_prefix("http://")
-        .ok_or_else(|| "only http:// is supported for the compatibility probe".to_string())?;
-
-    let (authority, path) = match rest.find('/') {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => (rest, "/"),
-    };
-    let (host, port) = match authority.rfind(':') {
-        Some(i) => {
-            let p = authority[i + 1..]
-                .parse::<u16>()
-                .map_err(|_| "invalid port in base URL".to_string())?;
-            (&authority[..i], p)
-        }
-        None => (authority, 80u16),
-    };
-
-    let addr = (host, port)
-        .to_socket_addrs()
-        .map_err(|e| format!("address resolution failed: {e}"))?
-        .next()
-        .ok_or_else(|| "no socket address resolved".to_string())?;
-
-    let mut stream = TcpStream::connect_timeout(&addr, PROBE_TIMEOUT)
-        .map_err(|e| format!("connect failed: {e}"))?;
-    stream.set_read_timeout(Some(PROBE_TIMEOUT)).ok();
-    stream.set_write_timeout(Some(PROBE_TIMEOUT)).ok();
-
-    let request = format!(
-        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: rpf_scanner-codewalker-compat-probe\r\nAccept: */*\r\nConnection: close\r\n\r\n"
-    );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|e| format!("request write failed: {e}"))?;
-
-    let mut buf = Vec::new();
-    stream
-        .read_to_end(&mut buf)
-        .map_err(|e| format!("response read failed: {e}"))?;
-
-    let text = String::from_utf8_lossy(&buf).to_string();
-    let status = parse_status_line(&text).ok_or_else(|| "no HTTP status line".to_string())?;
-    let body = text.splitn(2, "\r\n\r\n").nth(1).unwrap_or("").to_string();
-
-    Ok(HttpResponse { status, body })
-}
-
-/// Length-limit a response body for safe storage in the report.
-fn sample_body(body: &str) -> Option<String> {
-    if body.is_empty() {
-        return None;
-    }
-    if body.chars().count() <= MAX_BODY_SAMPLE {
-        Some(body.to_string())
-    } else {
-        Some(body.chars().take(MAX_BODY_SAMPLE).collect())
-    }
-}
-
-/// Classify a response body into a coarse shape string + JSON-parse success.
-fn classify_shape(body: &str) -> (String, bool) {
-    if body.trim().is_empty() {
-        return ("empty".to_string(), false);
-    }
-    match serde_json::from_str::<serde_json::Value>(body) {
-        Ok(v) => {
-            let shape = match v {
-                serde_json::Value::Array(_) => "json_array",
-                serde_json::Value::Object(_) => "json_object",
-                serde_json::Value::String(_) => "json_string",
-                serde_json::Value::Number(_) => "json_number",
-                serde_json::Value::Bool(_) => "json_bool",
-                serde_json::Value::Null => "json_null",
-            };
-            (shape.to_string(), true)
-        }
-        Err(_) => ("non_json".to_string(), false),
-    }
-}
 
 fn gate(
     name: &str,
@@ -217,7 +78,7 @@ pub fn probe_codewalker_live_compatibility(
     let root_url = format!("{normalized}/");
     let status_url = format!("{normalized}{SERVICE_STATUS_PATH}");
     let search_url = format!(
-        "{normalized}{SEARCH_ENDPOINT}?filename={}",
+        "{normalized}{SEARCH_ENDPOINT}?{SEARCH_QUERY_PARAM}={}",
         url_encode(&search_filename)
     );
     let replace_url = format!("{normalized}{REPLACE_ENDPOINT}");
@@ -236,13 +97,22 @@ pub fn probe_codewalker_live_compatibility(
                 response_body_sample: None,
                 response_json_parse_success: false,
                 response_shape: "not_checked".to_string(),
+                connected_address: None,
+                transfer_encoding: None,
+                content_length: None,
+                body_decode_mode: Some("not_checked".to_string()),
                 safe_to_call_again: true,
                 mutating: false,
                 detail: Some("base URL not valid".to_string()),
             });
             return (None, "not_checked".to_string(), false);
         }
-        match http_request(method, url) {
+        // GET/OPTIONS only — the probe never issues POST or any mutating method.
+        let result = match method {
+            "OPTIONS" => http_options(url),
+            _ => http_get(url),
+        };
+        match result {
             Ok(resp) => {
                 let (shape, parsed) = classify_shape(&resp.body);
                 observations.push(CodeWalkerCompatibilityObservation {
@@ -251,9 +121,13 @@ pub fn probe_codewalker_live_compatibility(
                     method: method.to_string(),
                     called: true,
                     http_status: Some(resp.status),
-                    response_body_sample: sample_body(&resp.body),
+                    response_body_sample: sample_body(&resp.body, MAX_BODY_SAMPLE),
                     response_json_parse_success: parsed,
                     response_shape: shape.clone(),
+                    connected_address: resp.connected_address.clone(),
+                    transfer_encoding: resp.transfer_encoding.clone(),
+                    content_length: resp.content_length,
+                    body_decode_mode: Some(resp.body_decode_mode.as_str().to_string()),
                     safe_to_call_again: true,
                     mutating: false,
                     detail: Some(format!("HTTP {}", resp.status)),
@@ -270,6 +144,10 @@ pub fn probe_codewalker_live_compatibility(
                     response_body_sample: None,
                     response_json_parse_success: false,
                     response_shape: "unreachable".to_string(),
+                    connected_address: None,
+                    transfer_encoding: None,
+                    content_length: None,
+                    body_decode_mode: Some("empty".to_string()),
                     safe_to_call_again: true,
                     mutating: false,
                     detail: Some(e),
@@ -512,6 +390,7 @@ pub fn probe_codewalker_live_compatibility(
         service_status_shape,
         search_probe_checked: valid,
         search_probe_filename: search_filename,
+        search_query_parameter_used: SEARCH_QUERY_PARAM.to_string(),
         search_probe_http_status,
         search_response_shape,
         replace_endpoint_options_checked: check_replace_options,

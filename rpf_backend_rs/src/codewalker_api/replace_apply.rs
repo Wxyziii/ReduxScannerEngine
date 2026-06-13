@@ -1,6 +1,4 @@
 use std::fs;
-use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 
@@ -8,6 +6,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::dry_replace::{REPLACE_ENDPOINT, SELECTED_WRITER_ROUTE};
+use super::http_client::{base_url_valid, http_post_json, normalize_base_url};
 use super::model::*;
 
 use crate::rpf_adapter::contract::RpfAdapter;
@@ -60,95 +59,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     format!("{:x}", h.finalize())
-}
-
-fn normalize_base_url(raw: &str) -> String {
-    let trimmed = raw.trim();
-    let no_trailing = trimmed.trim_end_matches('/');
-    if no_trailing.is_empty() {
-        trimmed.to_string()
-    } else {
-        no_trailing.to_string()
-    }
-}
-
-fn base_url_valid(normalized: &str) -> bool {
-    let rest = match normalized.strip_prefix("http://") {
-        Some(r) => r,
-        None => match normalized.strip_prefix("https://") {
-            Some(r) => r,
-            None => return false,
-        },
-    };
-    let authority = rest.split('/').next().unwrap_or("");
-    let host = authority.split(':').next().unwrap_or("");
-    !host.is_empty()
-}
-
-fn parse_status_line(text: &str) -> Option<u16> {
-    let first = text.lines().next()?;
-    let mut parts = first.split_whitespace();
-    let _http = parts.next()?;
-    parts.next()?.parse::<u16>().ok()
-}
-
-/// Captured POST response (status line + body).
-struct PostResponse {
-    status: u16,
-    body: String,
-}
-
-/// Perform a single HTTP POST with a JSON body. Only `http://` is dialed (no TLS
-/// in std); `https://` is rejected rather than handled insecurely. This is the
-/// ONLY function in the whole crate that issues a non-GET HTTP request, and it is
-/// reached only after every replace-apply gate has passed.
-fn http_post_json(url: &str, body: &str) -> Result<PostResponse, String> {
-    let rest = url
-        .strip_prefix("http://")
-        .ok_or_else(|| "only http:// is supported for replace apply".to_string())?;
-
-    let (authority, path) = match rest.find('/') {
-        Some(i) => (&rest[..i], &rest[i..]),
-        None => (rest, "/"),
-    };
-    let (host, port) = match authority.rfind(':') {
-        Some(i) => {
-            let p = authority[i + 1..]
-                .parse::<u16>()
-                .map_err(|_| "invalid port in base URL".to_string())?;
-            (&authority[..i], p)
-        }
-        None => (authority, 80u16),
-    };
-
-    let addr = (host, port)
-        .to_socket_addrs()
-        .map_err(|e| format!("address resolution failed: {e}"))?
-        .next()
-        .ok_or_else(|| "no socket address resolved".to_string())?;
-
-    let mut stream = TcpStream::connect_timeout(&addr, REQUEST_TIMEOUT)
-        .map_err(|e| format!("connect failed: {e}"))?;
-    stream.set_read_timeout(Some(REQUEST_TIMEOUT)).ok();
-    stream.set_write_timeout(Some(REQUEST_TIMEOUT)).ok();
-
-    let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: rpf_scanner-codewalker-replace-apply\r\nContent-Type: application/json\r\nContent-Length: {}\r\nAccept: */*\r\nConnection: close\r\n\r\n{body}",
-        body.as_bytes().len()
-    );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|e| format!("request write failed: {e}"))?;
-
-    let mut buf = Vec::new();
-    stream
-        .read_to_end(&mut buf)
-        .map_err(|e| format!("response read failed: {e}"))?;
-
-    let text = String::from_utf8_lossy(&buf).to_string();
-    let status = parse_status_line(&text).ok_or_else(|| "no HTTP status line".to_string())?;
-    let body = text.splitn(2, "\r\n\r\n").nth(1).unwrap_or("").to_string();
-    Ok(PostResponse { status, body })
 }
 
 fn gate(
@@ -393,7 +303,7 @@ pub fn apply_codewalker_replace_on_test_archive(
                 request_body_json: body_str.clone(),
             };
 
-            let response = match http_post_json(&replace_url, &body_str) {
+            let response = match http_post_json(&replace_url, &body_str, REQUEST_TIMEOUT) {
                 Ok(resp) => {
                     let ok = (200..300).contains(&resp.status);
                     if ok {
