@@ -53,6 +53,50 @@ struct PlannedRequestView {
     archive_path: Option<String>,
     source_file_path: String,
     archive_relative_path: String,
+    // ── CodeWalker.API contract fields (T0.6.15) ────────────────────────────
+    local_file_path: Option<String>,
+    codewalker_target_path: Option<String>,
+    actual_request_payload: Option<ActualPayloadView>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(rename_all = "camelCase", default)]
+struct ActualPayloadView {
+    local_file_path: Option<String>,
+    rpf_file_path: Option<String>,
+}
+
+impl PlannedRequestView {
+    /// The absolute local replacement file path to send as `localFilePath`.
+    fn local_file_path(&self) -> Option<String> {
+        self.actual_request_payload
+            .as_ref()
+            .and_then(|p| p.local_file_path.clone())
+            .or_else(|| self.local_file_path.clone())
+            .filter(|s| !s.trim().is_empty())
+    }
+
+    /// The in-archive entry path to send as `rpfFilePath`.
+    fn rpf_file_path(&self) -> Option<String> {
+        self.actual_request_payload
+            .as_ref()
+            .and_then(|p| p.rpf_file_path.clone())
+            .or_else(|| self.codewalker_target_path.clone())
+            .or_else(|| self.rpf_path.clone())
+            .filter(|s| !s.trim().is_empty())
+    }
+
+    /// True when this request carries an absolute, existing local file and a
+    /// non-empty in-archive target path — required before any POST.
+    fn contract_valid(&self) -> bool {
+        match (self.local_file_path(), self.rpf_file_path()) {
+            (Some(local), Some(_rpf)) => {
+                let p = Path::new(&local);
+                p.is_absolute() && p.is_file()
+            }
+            _ => false,
+        }
+    }
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -180,6 +224,13 @@ pub fn apply_codewalker_replace_on_test_archive(
 
     let plan_has_requests = plan_loaded && !plan_view.planned_requests.is_empty();
     let plan_dry_run_only = plan_loaded && plan_view.dry_run_only;
+    // Every planned request must carry an absolute, existing localFilePath and a
+    // non-empty rpfFilePath before any POST is sent (CodeWalker.API contract).
+    let all_contract_payloads_valid = plan_has_requests
+        && plan_view
+            .planned_requests
+            .iter()
+            .all(|r| r.contract_valid());
 
     // ── Strict gates ─────────────────────────────────────────────────────────
     // All `blocking` gates must pass before any HTTP request is sent.
@@ -233,6 +284,13 @@ pub fn apply_codewalker_replace_on_test_archive(
             message: "The dry replace plan was a validated dry-run plan.",
         },
         G {
+            name: "local_file_paths_absolute_and_exist",
+            passed: all_contract_payloads_valid,
+            blocking: true,
+            message: "Every planned request has an absolute, existing localFilePath \
+                      and a non-empty rpfFilePath.",
+        },
+        G {
             name: "execute_flag_present",
             passed: execute_requested,
             blocking: true,
@@ -280,14 +338,14 @@ pub fn apply_codewalker_replace_on_test_archive(
         }
 
         for req in &plan_view.planned_requests {
-            // Conservative, fully visible JSON body. Execution marker is explicit.
+            // Exact CodeWalker.API `ReplaceFileForm` contract: only `localFilePath`
+            // (absolute local replacement file) and `rpfFilePath` (in-archive entry
+            // path). No `sourceFilePath`/`rpfPath`/`archivePath`/`execute` keys.
+            let local_file_path = req.local_file_path().unwrap_or_default();
+            let rpf_file_path = req.rpf_file_path().unwrap_or_default();
             let body = serde_json::json!({
-                "rpfPath": req.rpf_path,
-                "archivePath": req.archive_path,
-                "sourceFilePath": req.source_file_path,
-                "archiveRelativePath": req.archive_relative_path,
-                "dryRunOnly": false,
-                "execute": true,
+                "localFilePath": local_file_path,
+                "rpfFilePath": rpf_file_path,
             });
             let body_str = serde_json::to_string(&body).unwrap_or_else(|_| "{}".to_string());
 
@@ -295,9 +353,9 @@ pub fn apply_codewalker_replace_on_test_archive(
                 method: "POST".to_string(),
                 url: replace_url.clone(),
                 endpoint: REPLACE_ENDPOINT.to_string(),
-                rpf_path: req.rpf_path.clone(),
+                rpf_path: Some(rpf_file_path.clone()),
                 archive_path: req.archive_path.clone(),
-                source_file_path: req.source_file_path.clone(),
+                source_file_path: local_file_path.clone(),
                 archive_relative_path: req.archive_relative_path.clone(),
                 dry_run_only: false,
                 request_body_json: body_str.clone(),
@@ -333,8 +391,8 @@ pub fn apply_codewalker_replace_on_test_archive(
 
             item_results.push(CodeWalkerReplaceApplyItemResult {
                 archive_relative_path: req.archive_relative_path.clone(),
-                codewalker_resolved_path: req.rpf_path.clone().or_else(|| req.archive_path.clone()),
-                source_file_path: req.source_file_path.clone(),
+                codewalker_resolved_path: req.rpf_file_path(),
+                source_file_path: req.local_file_path().unwrap_or_default(),
                 request,
                 response,
             });
@@ -343,6 +401,15 @@ pub fn apply_codewalker_replace_on_test_archive(
         // Record post-execution hash if accessible.
         post_sha = fs::read(target_path).ok().map(|b| sha256_hex(&b));
     } else {
+        if plan_has_requests && !all_contract_payloads_valid {
+            blocked_items.push(CodeWalkerReplaceApplyBlockedItem {
+                component: "payload".to_string(),
+                reason: "A planned request lacks an absolute, existing localFilePath or a \
+                         non-empty rpfFilePath; no replace request was sent."
+                    .to_string(),
+                block_type: "replace_payload_contract_invalid".to_string(),
+            });
+        }
         blocked_items.push(CodeWalkerReplaceApplyBlockedItem {
             component: "authorization".to_string(),
             reason: "One or more blocking gates failed; no replace request was sent.".to_string(),

@@ -329,6 +329,22 @@ When running real copied-archive tests against `update.rpf`, use
 resolve. This is an explicit per-run preference, never a global default.
 See [T0_6_13_CODEWALKER_ARCHIVE_PREFIX_RESOLUTION.md](docs/T0_6_13_CODEWALKER_ARCHIVE_PREFIX_RESOLUTION.md) for details.
 
+### Phase T0.6.15 — CodeWalker Replace Payload Compatibility Fix
+The first real copied-archive execute (T0.6.14) sent `POST /api/replace-file` and got
+`HTTP 400 "Invalid or missing localFilePath."` with the archive byte-identical. The
+CodeWalker.API contract was recovered read-only from the published binary: its
+`ReplaceController` binds a JSON `ReplaceFileForm` requiring **`localFilePath`** (an
+absolute local path to the replacement file) and **`rpfFilePath`** (the full in-archive
+entry path it resolves the owning RPF from). The dry-replace plan now distinguishes
+scanner metadata from the exact `actualRequestPayload`, emits an absolute `localFilePath`
+plus `rpfFilePath`, and records `apiContractName`/`localFilePathIsAbsolute`/
+`requestSchemaValidated`. Replace-apply sends exactly `{ localFilePath, rpfFilePath }`
+(no `sourceFilePath`/`rpfPath`/`archivePath`/`execute`) and a new blocking gate refuses
+to POST unless every planned request has an absolute, existing `localFilePath`. No gate
+was weakened, no original archive touched, no CodeWalker.API file modified, no native RPF
+parsing; `writerAllowed` stays false and the active adapter stays `NullRpfAdapter`.
+See [T0_6_15_CODEWALKER_REPLACE_PAYLOAD_COMPAT.md](docs/T0_6_15_CODEWALKER_REPLACE_PAYLOAD_COMPAT.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

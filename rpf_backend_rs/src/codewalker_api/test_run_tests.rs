@@ -137,15 +137,32 @@ mod test_run_tests {
         )
     }
 
+    const RPF_FILE_PATH: &str = "update/update.rpf/common/data/visualsettings.dat";
+
     fn dry_plan(dir: &Path, with_requests: bool) -> PathBuf {
         let requests = if with_requests {
+            // Real absolute local replacement file (T0.6.15 contract).
+            let local = dir.join("bundle/visualsettings.dat");
+            std::fs::create_dir_all(local.parent().unwrap()).unwrap();
+            std::fs::write(&local, b"replacement bytes\n").unwrap();
+            let local_str = local.display().to_string();
             json!([{
                 "endpoint": "/api/replace-file",
                 "method": "POST",
-                "rpfPath": "update/common/data/x.dat",
-                "archivePath": "update/common/data/x.dat",
-                "sourceFilePath": "/bundle/files/common/data/x.dat",
-                "archiveRelativePath": "common/data/x.dat",
+                "apiContractName": "codewalker_replace_file_v1",
+                "actualRequestPayload": {
+                    "localFilePath": local_str,
+                    "rpfFilePath": RPF_FILE_PATH
+                },
+                "localFilePath": local_str,
+                "localFilePathIsAbsolute": true,
+                "localFilePathExists": true,
+                "codewalkerTargetPath": RPF_FILE_PATH,
+                "requestSchemaValidated": true,
+                "rpfPath": RPF_FILE_PATH,
+                "archivePath": RPF_FILE_PATH,
+                "sourceFilePath": local_str,
+                "archiveRelativePath": "common/data/visualsettings.dat",
                 "dryRunOnly": true
             }])
         } else {
@@ -471,6 +488,39 @@ mod test_run_tests {
         assert_eq!(caps.len(), 1);
         assert_eq!(caps[0].method, "POST");
         assert_eq!(caps[0].path, "/api/replace-file");
+    }
+
+    #[test]
+    fn test_run_execute_uses_correct_replace_payload() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = eligible_setup(dir.path());
+        let server = MockServer::start(1, 200, r#"{"ok":true}"#);
+        let r = run_execute(&s, &server.base_url);
+        assert!(r.codewalker_replace_apply_invoked);
+        // The coordinator wrote the replace-apply report; inspect the sent body.
+        let apply_path = r.replace_apply_report_path.as_ref().unwrap();
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(apply_path).unwrap()).unwrap();
+        let body_json = v["itemResults"][0]["request"]["requestBodyJson"]
+            .as_str()
+            .unwrap();
+        let body: Value = serde_json::from_str(body_json).unwrap();
+        assert!(Path::new(body["localFilePath"].as_str().unwrap()).is_absolute());
+        assert_eq!(body["rpfFilePath"], RPF_FILE_PATH);
+        assert!(body.get("sourceFilePath").is_none());
+        assert!(body.get("execute").is_none());
+    }
+
+    #[test]
+    fn no_post_replace_in_plan_only_modes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = eligible_setup(dir.path());
+        // 0-connection server: it never blocks on accept, so a clean join proves
+        // plan-only sent nothing.
+        let server = MockServer::start(0, 200, r#"{"ok":true}"#);
+        let r = run_plan(&s, Some(&server.base_url));
+        assert_eq!(r.mode, CodeWalkerTestRunMode::PlanOnly);
+        assert!(!r.codewalker_replace_apply_invoked);
+        assert!(server.captured().is_empty());
     }
 
     #[test]

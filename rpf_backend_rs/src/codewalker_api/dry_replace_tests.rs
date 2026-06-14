@@ -134,6 +134,76 @@ mod dry_replace_tests {
     }
 
     #[test]
+    fn dry_replace_plan_emits_local_file_path() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (manifest, resolve) = happy(dir.path());
+        let r = build_codewalker_dry_replace_plan(dir.path(), &manifest, &resolve, None).unwrap();
+        let p = r.items[0].planned_payload.as_ref().unwrap();
+        assert!(!p.local_file_path.is_empty());
+        assert!(p.local_file_path_exists);
+        // The actual wire payload carries localFilePath + rpfFilePath.
+        assert_eq!(p.actual_request_payload.local_file_path, p.local_file_path);
+        assert_eq!(
+            p.actual_request_payload.rpf_file_path,
+            format!("update/{ARP}")
+        );
+    }
+
+    #[test]
+    fn dry_replace_plan_local_file_path_is_absolute() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (manifest, resolve) = happy(dir.path());
+        let r = build_codewalker_dry_replace_plan(dir.path(), &manifest, &resolve, None).unwrap();
+        let p = r.items[0].planned_payload.as_ref().unwrap();
+        assert!(p.local_file_path_is_absolute);
+        assert!(Path::new(&p.local_file_path).is_absolute());
+        assert!(Path::new(&p.actual_request_payload.local_file_path).is_absolute());
+    }
+
+    #[test]
+    fn dry_replace_plan_blocks_if_bundle_file_missing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // Manifest references a bundle file that was never written.
+        let abs = dir.path().join(REL);
+        let manifest = write_manifest(dir.path(), &abs, Some(&sha256_hex(CONTENT)));
+        let resolve = write_resolve_resolved(dir.path());
+        let r = build_codewalker_dry_replace_plan(dir.path(), &manifest, &resolve, None).unwrap();
+        assert!(r.items[0].planned_payload.is_none());
+        assert_eq!(r.summary.planned_request_count, 0);
+        assert!(r
+            .blocked_items
+            .iter()
+            .any(|b| b.block_type == "item_not_ready_for_replace"));
+    }
+
+    #[test]
+    fn dry_replace_plan_records_actual_request_payload() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (manifest, resolve) = happy(dir.path());
+        let r = build_codewalker_dry_replace_plan(dir.path(), &manifest, &resolve, None).unwrap();
+        // Serialize and confirm the actualRequestPayload has exactly the API keys.
+        let v: Value = serde_json::to_value(r.items[0].planned_payload.as_ref().unwrap()).unwrap();
+        let actual = &v["actualRequestPayload"];
+        assert!(actual["localFilePath"].is_string());
+        assert!(actual["rpfFilePath"].is_string());
+        assert_eq!(actual.as_object().unwrap().len(), 2);
+        assert_eq!(v["apiContractName"], "codewalker_replace_file_v1");
+        assert_eq!(v["requestSchemaValidated"], true);
+    }
+
+    #[test]
+    fn dry_replace_plan_uses_discovered_replace_contract_fields() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (manifest, resolve) = happy(dir.path());
+        let r = build_codewalker_dry_replace_plan(dir.path(), &manifest, &resolve, None).unwrap();
+        let p = r.items[0].planned_payload.as_ref().unwrap();
+        assert_eq!(p.endpoint, "/api/replace-file");
+        assert_eq!(p.method, "POST");
+        assert_eq!(p.codewalker_target_path, format!("update/{ARP}"));
+        assert!(p.request_schema_validated);
+    }
+
+    #[test]
     fn dry_replace_plan_accepts_preferred_archive_resolved_target() {
         let dir = tempfile::TempDir::new().unwrap();
         let abs = write_bundle(dir.path());

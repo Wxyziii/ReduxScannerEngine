@@ -502,15 +502,44 @@ pub struct CodeWalkerDryReplaceResolvedTarget {
     pub ambiguous: bool,
 }
 
-/// A conservative model of the future `/api/replace-file` request body. This is
-/// NEVER sent anywhere in this milestone — it is structured planning only.
+/// The EXACT JSON body sent to CodeWalker.API `POST /api/replace-file`
+/// (its `ReplaceFileForm` `[FromBody]` DTO). Field names match the discovered
+/// CodeWalker.API contract precisely: `localFilePath` is the absolute local path
+/// to the replacement file; `rpfFilePath` is the full in-archive entry path that
+/// CodeWalker resolves the owning RPF from. No extra keys are sent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerReplaceActualPayload {
+    pub local_file_path: String,
+    pub rpf_file_path: String,
+}
+
+/// A model of the future `/api/replace-file` request. The `actualRequestPayload`
+/// is exactly what would be sent on the wire; all other fields are scanner-side
+/// metadata for auditing and are NOT part of the CodeWalker.API request body.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeWalkerDryReplacePayload {
     /// Always `/api/replace-file`.
     pub endpoint: String,
-    /// Always `POST` (modelled, never issued).
+    /// Always `POST` (modelled, never issued by this command).
     pub method: String,
+
+    // ── CodeWalker.API contract (T0.6.15) ───────────────────────────────────
+    /// Names the discovered API contract used to shape `actualRequestPayload`.
+    pub api_contract_name: String,
+    /// The exact JSON body a future replace would send.
+    pub actual_request_payload: CodeWalkerReplaceActualPayload,
+    /// Absolute local path to the replacement (bundle) file.
+    pub local_file_path: String,
+    pub local_file_path_is_absolute: bool,
+    pub local_file_path_exists: bool,
+    /// Full in-archive entry path CodeWalker resolves the RPF from (`rpfFilePath`).
+    pub codewalker_target_path: String,
+    /// True when localFilePath is absolute+present and the target path is set.
+    pub request_schema_validated: bool,
+
+    // ── Scanner-side metadata (NOT sent to CodeWalker.API) ──────────────────
     pub rpf_path: Option<String>,
     pub archive_path: Option<String>,
     pub source_file_path: String,

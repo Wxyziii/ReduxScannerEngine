@@ -127,6 +127,27 @@ mod post_write_verify_tests {
     // ── Report reading ──────────────────────────────────────────────────────
 
     #[test]
+    fn post_write_verify_still_reports_failed_no_change_on_http_400() {
+        // Replace sent but failed (HTTP 400) with the target unchanged — the
+        // T0.6.14/T0.6.15 live shape. Must classify as execution_failed_no_change.
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = setup(dir.path(), true, 0, 1, &current_hash());
+        let r = run(&s);
+        assert_eq!(r.status, CodeWalkerPostWriteVerifyStatus::Verified);
+        assert_eq!(
+            r.verification_result,
+            CodeWalkerPostWriteResult::ExecutionFailedNoChange
+        );
+        assert!(!r.modifies_archive);
+        // A backup-based rollback plan is still available but not needed.
+        assert_eq!(
+            r.rollback_plan.rollback_plan_status,
+            CodeWalkerRollbackPlanStatus::Ready
+        );
+        assert!(!r.rollback_executed);
+    }
+
+    #[test]
     fn codewalker_post_write_verify_reads_replace_apply_report() {
         let dir = tempfile::TempDir::new().unwrap();
         let s = setup(dir.path(), true, 1, 0, &current_hash());
