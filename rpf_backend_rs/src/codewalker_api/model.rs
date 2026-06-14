@@ -271,6 +271,25 @@ pub enum CodeWalkerSearchConfidence {
     None,
 }
 
+/// The deterministic resolution strategy that decided a target's outcome.
+/// Reported per target so callers can audit why a candidate was (not) chosen.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerResolutionStrategy {
+    /// Exactly one candidate equalled the normalized entry path.
+    Exact,
+    /// Exactly one candidate matched the caller's preferred archive + entry.
+    PreferredArchiveSuffix,
+    /// Exactly one candidate matched by entry-path suffix (no preference).
+    Suffix,
+    /// Only filename-only candidates were present; too weak to resolve.
+    FilenameOnly,
+    /// Multiple candidates tied on the strongest applicable rule.
+    Ambiguous,
+    /// No candidate matched, or the API was offline.
+    Unresolved,
+}
+
 /// A single search result candidate returned by CodeWalker.API.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -282,6 +301,16 @@ pub struct CodeWalkerSearchCandidate {
     pub matches_archive_relative_path_suffix: bool,
     pub confidence: CodeWalkerSearchConfidence,
     pub selected: bool,
+
+    // ── T0.6.13 archive-prefix-aware fields ─────────────────────────────────
+    /// The original candidate string exactly as returned by CodeWalker.
+    pub candidate_original_path: String,
+    /// The fully normalized candidate (slashes, collapsed, leading slash trimmed).
+    pub candidate_normalized_path: String,
+    /// True when this candidate matched the caller's preferred archive context.
+    pub matched_preferred_archive: bool,
+    /// The preferred archive prefix this candidate matched, when any.
+    pub matched_archive_prefix: Option<String>,
 }
 
 /// The actual HTTP GET issued for one target.
@@ -311,6 +340,12 @@ pub struct CodeWalkerSearchTarget {
     pub match_type: CodeWalkerSearchConfidence,
     pub selected_candidate: Option<String>,
     pub reason: String,
+
+    // ── T0.6.13 archive-prefix-aware fields ─────────────────────────────────
+    /// The deterministic strategy that produced this target's outcome.
+    pub resolution_strategy: CodeWalkerResolutionStrategy,
+    /// Present when the target was left ambiguous, explaining why.
+    pub ambiguity_reason: Option<String>,
 }
 
 /// A resolved target (selected candidate present).
@@ -395,6 +430,11 @@ pub struct CodeWalkerSearchResolveReport {
     pub codewalker_api_reachable: bool,
     pub codewalker_api_ready_for_search: bool,
     pub search_endpoint_used: String,
+
+    // ── T0.6.13 archive-prefix-aware resolution inputs ──────────────────────
+    pub preferred_archive: Option<String>,
+    pub preferred_archive_path: Option<String>,
+    pub archive_prefix_resolution_enabled: bool,
 
     pub targets: Vec<CodeWalkerSearchTarget>,
     pub resolved_targets: Vec<CodeWalkerResolvedTarget>,

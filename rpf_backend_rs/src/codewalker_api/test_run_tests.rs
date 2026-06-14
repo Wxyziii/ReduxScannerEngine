@@ -261,6 +261,43 @@ mod test_run_tests {
         assert!(r.dry_replace_plan_has_planned_requests);
     }
 
+    /// A resolve report whose single target was resolved via an archive-prefix
+    /// preference (T0.6.13).
+    fn preferred_archive_resolve(dir: &Path) -> PathBuf {
+        write_json(
+            dir,
+            "resolve.json",
+            &json!({
+                "status": "completed",
+                "preferredArchive": "update/update.rpf",
+                "archivePrefixResolutionEnabled": true,
+                "resolvedTargets": [{
+                    "archiveRelativePath": "common/data/visualsettings.dat",
+                    "selectedCandidate": "update/update.rpf/common/data/visualsettings.dat",
+                    "matchType": "suffix",
+                    "resolutionStrategy": "preferred_archive_suffix"
+                }],
+                "unresolvedTargets": [],
+                "ambiguousTargets": []
+            }),
+        )
+    }
+
+    #[test]
+    fn test_run_plan_ready_after_preferred_archive_resolution_if_other_inputs_valid() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut s = eligible_setup(dir.path());
+        // Swap in a resolve report produced by archive-prefix resolution.
+        s.resolve = preferred_archive_resolve(dir.path());
+        let r = run_plan(&s, Some("http://localhost:5555"));
+        assert_eq!(r.status, CodeWalkerTestRunStatus::PlannedReady);
+        assert!(r.ready_for_execute);
+        assert!(r.dry_replace_plan_has_planned_requests);
+        // Plan-only: no execution happened.
+        assert!(!r.codewalker_replace_apply_invoked);
+        assert!(!r.modifies_archive);
+    }
+
     #[test]
     fn codewalker_test_run_plan_mode_sends_no_http_requests() {
         let dir = tempfile::TempDir::new().unwrap();

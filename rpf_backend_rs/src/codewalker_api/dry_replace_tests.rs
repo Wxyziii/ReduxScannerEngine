@@ -56,6 +56,25 @@ mod dry_replace_tests {
         path
     }
 
+    /// A resolve report whose target was resolved via an archive-prefix
+    /// preference (T0.6.13): the selected candidate carries the archive prefix.
+    fn write_resolve_preferred_archive(dir: &Path) -> PathBuf {
+        let report = json!({
+            "preferredArchive": "update/update.rpf",
+            "archivePrefixResolutionEnabled": true,
+            "resolvedTargets": [{
+                "archiveRelativePath": ARP,
+                "selectedCandidate": format!("update/update.rpf/{ARP}"),
+                "matchType": "suffix"
+            }],
+            "unresolvedTargets": [],
+            "ambiguousTargets": []
+        });
+        let path = dir.join("codewalker_resolve_targets.json");
+        fs::write(&path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
+        path
+    }
+
     fn write_resolve_unresolved(dir: &Path) -> PathBuf {
         let report = json!({
             "resolvedTargets": [],
@@ -112,6 +131,22 @@ mod dry_replace_tests {
             r.items[0].codewalker_resolved_path.as_deref(),
             Some(format!("update/{ARP}").as_str())
         );
+    }
+
+    #[test]
+    fn dry_replace_plan_accepts_preferred_archive_resolved_target() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let abs = write_bundle(dir.path());
+        let manifest = write_manifest(dir.path(), &abs, Some(&sha256_hex(CONTENT)));
+        let resolve = write_resolve_preferred_archive(dir.path());
+        let r = build_codewalker_dry_replace_plan(dir.path(), &manifest, &resolve, None).unwrap();
+        assert!(r.items[0].resolved_target.resolved);
+        assert_eq!(
+            r.items[0].codewalker_resolved_path.as_deref(),
+            Some(format!("update/update.rpf/{ARP}").as_str())
+        );
+        assert!(r.summary.planned_request_count > 0);
+        assert_eq!(r.status, CodeWalkerDryReplacePlanStatus::Planned);
     }
 
     #[test]

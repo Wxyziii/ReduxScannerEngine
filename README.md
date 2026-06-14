@@ -304,6 +304,31 @@ parameter. Read-only by default; POST stays scoped to the gate-protected replace
 path. No archive mutation, no native RPF parsing.
 See [T0_6_12_CODEWALKER_HTTP_COMPAT.md](docs/T0_6_12_CODEWALKER_HTTP_COMPAT.md) for details.
 
+### Phase T0.6.13 — Archive-Prefix-Aware CodeWalker Target Resolution
+`codewalker-resolve-targets` can now resolve suffix matches that would otherwise be
+ambiguous when the caller supplies an intended archive context. Without a preference
+the conservative behavior is unchanged (multiple suffix matches stay ambiguous). With
+`--preferred-archive <prefix>` (or `--preferred-archive-path <path>`) **and**
+`--allow-archive-prefix-resolution`, the resolver selects the single candidate under
+that archive — e.g. for `common/data/visualsettings.dat` and candidates spanning
+`update.rpf`, `update/update.rpf`, and `update/x64/update.rpf`, passing
+`--preferred-archive "update/update.rpf"` resolves to
+`update/update.rpf/common/data/visualsettings.dat`. It still blocks when no candidate
+matches the preferred archive, when multiple candidates match it equally, and exact
+full-path matches still win over any preference. Paths are normalized (backslashes →
+forward slashes, collapsed slashes, trimmed leading slash) and the preferred-archive
+match is case-insensitive; reports add `preferredArchive`,
+`archivePrefixResolutionEnabled`, per-target `resolutionStrategy`/`ambiguityReason`,
+and per-candidate `candidateOriginalPath`/`candidateNormalizedPath`/
+`matchedPreferredArchive`/`matchedArchivePrefix`. Still **GET-only**: never POST,
+never replace/import/reload-services/set-config or any mutation endpoint, never opens
+or modifies an RPF archive; `canWriteArchive` and `writerAllowed` stay false.
+
+When running real copied-archive tests against `update.rpf`, use
+`--preferred-archive "update/update.rpf"` so CodeWalker's archive-prefixed candidates
+resolve. This is an explicit per-run preference, never a global default.
+See [T0_6_13_CODEWALKER_ARCHIVE_PREFIX_RESOLUTION.md](docs/T0_6_13_CODEWALKER_ARCHIVE_PREFIX_RESOLUTION.md) for details.
+
 ## What this project must not do
 
 This scanner should not:
