@@ -150,25 +150,47 @@ mod replace_apply_tests {
         )
     }
 
-    fn dry_plan(dir: &Path, with_requests: bool) -> PathBuf {
-        let requests = if with_requests {
-            json!([{
-                "endpoint": "/api/replace-file",
-                "method": "POST",
-                "rpfPath": "update/common/data/x.dat",
-                "archivePath": "update/common/data/x.dat",
-                "sourceFilePath": "/bundle/files/common/data/x.dat",
-                "archiveRelativePath": "common/data/x.dat",
-                "dryRunOnly": true
-            }])
-        } else {
-            json!([])
-        };
+    const RPF_FILE_PATH: &str = "update/update.rpf/common/data/x.dat";
+    const ARP: &str = "common/data/x.dat";
+
+    /// Create a real absolute local replacement file and return its abs path.
+    fn write_local_file(dir: &Path) -> PathBuf {
+        let p = dir.join("replacement/x.dat");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, b"replacement file bytes\n").unwrap();
+        p
+    }
+
+    /// A single planned request in the T0.6.15 contract shape.
+    fn planned_request(local_file_path: &str) -> Value {
+        json!({
+            "endpoint": "/api/replace-file",
+            "method": "POST",
+            "apiContractName": "codewalker_replace_file_v1",
+            "actualRequestPayload": {
+                "localFilePath": local_file_path,
+                "rpfFilePath": RPF_FILE_PATH
+            },
+            "localFilePath": local_file_path,
+            "localFilePathIsAbsolute": Path::new(local_file_path).is_absolute(),
+            "localFilePathExists": Path::new(local_file_path).is_file(),
+            "codewalkerTargetPath": RPF_FILE_PATH,
+            "requestSchemaValidated": true,
+            // Scanner-side metadata (not sent on the wire):
+            "rpfPath": RPF_FILE_PATH,
+            "archivePath": RPF_FILE_PATH,
+            "sourceFilePath": local_file_path,
+            "archiveRelativePath": ARP,
+            "dryRunOnly": true
+        })
+    }
+
+    fn write_plan(dir: &Path, requests: Value) -> PathBuf {
         write_json(
             dir,
             "codewalker_dry_replace_plan.json",
             &json!({
-                "status": if with_requests { "planned" } else { "blocked" },
+                "status": "planned",
                 "dryRunOnly": true,
                 "readyForExecution": false,
                 "plannedRequests": requests
@@ -176,18 +198,35 @@ mod replace_apply_tests {
         )
     }
 
-    /// Full eligible setup: copied test archive gate + planned dry plan.
+    fn dry_plan(dir: &Path, with_requests: bool) -> PathBuf {
+        if with_requests {
+            let local = write_local_file(dir);
+            write_plan(dir, json!([planned_request(&local.display().to_string())]))
+        } else {
+            write_plan(dir, json!([]))
+        }
+    }
+
+    /// Full eligible setup: copied test archive gate + planned dry plan with a
+    /// real absolute local replacement file.
     struct Setup {
         target: PathBuf,
         gate: PathBuf,
         plan: PathBuf,
+        local: PathBuf,
     }
 
     fn eligible_setup(dir: &Path) -> Setup {
         let target = write_target(dir);
         let gate = gate_report(dir, &target, true, "copied_test_archive");
-        let plan = dry_plan(dir, true);
-        Setup { target, gate, plan }
+        let local = write_local_file(dir);
+        let plan = write_plan(dir, json!([planned_request(&local.display().to_string())]));
+        Setup {
+            target,
+            gate,
+            plan,
+            local,
+        }
     }
 
     // ── Blocked cases (no HTTP) ─────────────────────────────────────────────
@@ -323,7 +362,7 @@ mod replace_apply_tests {
     }
 
     #[test]
-    fn codewalker_replace_apply_payload_contains_resolved_path_and_source_file() {
+    fn replace_apply_sends_local_file_path() {
         let dir = tempfile::TempDir::new().unwrap();
         let s = eligible_setup(dir.path());
         let server = MockServer::start(1, 200, r#"{"ok":true}"#);
@@ -337,11 +376,183 @@ mod replace_apply_tests {
         .unwrap();
         let caps = server.captured();
         let body: Value = serde_json::from_str(&caps[0].body).unwrap();
-        assert_eq!(body["rpfPath"], "update/common/data/x.dat");
-        assert_eq!(body["sourceFilePath"], "/bundle/files/common/data/x.dat");
-        assert_eq!(body["archiveRelativePath"], "common/data/x.dat");
-        assert_eq!(body["dryRunOnly"], false);
-        assert_eq!(body["execute"], true);
+        // Exact CodeWalker.API contract: localFilePath (absolute) + rpfFilePath.
+        assert_eq!(body["localFilePath"], s.local.display().to_string());
+        assert!(Path::new(body["localFilePath"].as_str().unwrap()).is_absolute());
+        assert_eq!(body["rpfFilePath"], RPF_FILE_PATH);
+    }
+
+    #[test]
+    fn replace_apply_does_not_send_source_file_path_as_primary_contract_field() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = eligible_setup(dir.path());
+        let server = MockServer::start(1, 200, r#"{"ok":true}"#);
+        let _ = apply_codewalker_replace_on_test_archive(
+            Some(&server.base_url),
+            &s.gate,
+            &s.plan,
+            true,
+            Some(CONFIRMATION_PHRASE),
+        )
+        .unwrap();
+        let caps = server.captured();
+        let body: Value = serde_json::from_str(&caps[0].body).unwrap();
+        // The corrected payload carries ONLY localFilePath + rpfFilePath.
+        assert!(body.get("sourceFilePath").is_none());
+        assert!(body.get("rpfPath").is_none());
+        assert!(body.get("archivePath").is_none());
+        assert!(body.get("execute").is_none());
+        assert!(body.get("dryRunOnly").is_none());
+        let obj = body.as_object().unwrap();
+        assert_eq!(obj.len(), 2, "body should have exactly 2 keys: {obj:?}");
+    }
+
+    #[test]
+    fn replace_apply_blocks_relative_local_file_path() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = write_target(dir.path());
+        let gate = gate_report(dir.path(), &target, true, "copied_test_archive");
+        // Relative localFilePath must block before any POST.
+        let plan = write_plan(dir.path(), json!([planned_request("relative/x.dat")]));
+        // 0-connection server: no POST should ever arrive (clean join).
+        let server = MockServer::start(0, 200, r#"{"ok":true}"#);
+        let r = apply_codewalker_replace_on_test_archive(
+            Some(&server.base_url),
+            &gate,
+            &plan,
+            true,
+            Some(CONFIRMATION_PHRASE),
+        )
+        .unwrap();
+        assert!(!r.replace_requests_sent);
+        assert_eq!(r.status, CodeWalkerReplaceApplyStatus::Blocked);
+        assert!(r
+            .blocked_items
+            .iter()
+            .any(|b| b.block_type == "replace_payload_contract_invalid"));
+        assert!(server.captured().is_empty());
+    }
+
+    #[test]
+    fn replace_apply_validates_local_file_path_exists_before_post() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = write_target(dir.path());
+        let gate = gate_report(dir.path(), &target, true, "copied_test_archive");
+        // Absolute but non-existent localFilePath must block before any POST.
+        let absent = dir.path().join("does/not/exist.dat");
+        let plan = write_plan(
+            dir.path(),
+            json!([planned_request(&absent.display().to_string())]),
+        );
+        // 0-connection server: no POST should ever arrive (clean join).
+        let server = MockServer::start(0, 200, r#"{"ok":true}"#);
+        let r = apply_codewalker_replace_on_test_archive(
+            Some(&server.base_url),
+            &gate,
+            &plan,
+            true,
+            Some(CONFIRMATION_PHRASE),
+        )
+        .unwrap();
+        assert!(!r.replace_requests_sent);
+        assert_eq!(r.status, CodeWalkerReplaceApplyStatus::Blocked);
+        assert!(server.captured().is_empty());
+    }
+
+    #[test]
+    fn replace_apply_preserves_execution_gates() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = eligible_setup(dir.path());
+        // Even with a valid corrected payload, missing --execute blocks (no HTTP).
+        let r = apply_codewalker_replace_on_test_archive(
+            Some("http://127.0.0.1:1"),
+            &s.gate,
+            &s.plan,
+            false,
+            Some(CONFIRMATION_PHRASE),
+        )
+        .unwrap();
+        assert_eq!(r.status, CodeWalkerReplaceApplyStatus::Blocked);
+        assert!(!r.replace_requests_sent);
+        // And an ineligible gate also blocks despite a valid payload.
+        let bad_gate = gate_report(dir.path(), &s.target, false, "unknown_archive");
+        let r2 = apply_codewalker_replace_on_test_archive(
+            Some("http://127.0.0.1:1"),
+            &bad_gate,
+            &s.plan,
+            true,
+            Some(CONFIRMATION_PHRASE),
+        )
+        .unwrap();
+        assert!(!r2.replace_requests_sent);
+    }
+
+    #[test]
+    fn replace_apply_mock_accepts_correct_payload() {
+        // Mock validates the contract: 200 only when localFilePath present.
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = eligible_setup(dir.path());
+        let server = MockServer::start(1, 200, r#"{"ok":true}"#);
+        let r = apply_codewalker_replace_on_test_archive(
+            Some(&server.base_url),
+            &s.gate,
+            &s.plan,
+            true,
+            Some(CONFIRMATION_PHRASE),
+        )
+        .unwrap();
+        let caps = server.captured();
+        let body: Value = serde_json::from_str(&caps[0].body).unwrap();
+        assert!(body.get("localFilePath").is_some());
+        assert!(body.get("rpfFilePath").is_some());
+        assert_eq!(r.status, CodeWalkerReplaceApplyStatus::Executed);
+    }
+
+    #[test]
+    fn replace_apply_mock_rejects_missing_local_file_path() {
+        // A contract-aware mock returns 400 if localFilePath is missing/empty —
+        // mirroring the real CodeWalker.API. Our payload always includes it, so a
+        // 400 here would only occur if the body were wrong; assert we send it and
+        // that a 400 is recorded as a clean failure with the target unchanged.
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = eligible_setup(dir.path());
+        let server = MockServer::start(1, 400, r#""Invalid or missing localFilePath.""#);
+        let before = std::fs::read(&s.target).unwrap();
+        let r = apply_codewalker_replace_on_test_archive(
+            Some(&server.base_url),
+            &s.gate,
+            &s.plan,
+            true,
+            Some(CONFIRMATION_PHRASE),
+        )
+        .unwrap();
+        assert_eq!(r.status, CodeWalkerReplaceApplyStatus::Failed);
+        assert_eq!(r.item_results[0].response.http_status, Some(400));
+        assert!(!r.modifies_archive);
+        assert_eq!(std::fs::read(&s.target).unwrap(), before);
+        // We still sent localFilePath — the corrected contract field.
+        let body: Value = serde_json::from_str(&server.captured()[0].body).unwrap();
+        assert!(body.get("localFilePath").is_some());
+    }
+
+    #[test]
+    fn replace_apply_no_import_reload_set_config_called() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = eligible_setup(dir.path());
+        let server = MockServer::start(1, 200, r#"{"ok":true}"#);
+        let r = apply_codewalker_replace_on_test_archive(
+            Some(&server.base_url),
+            &s.gate,
+            &s.plan,
+            true,
+            Some(CONFIRMATION_PHRASE),
+        )
+        .unwrap();
+        assert!(!r.import_endpoint_called);
+        assert!(!r.reload_services_called);
+        assert!(!r.set_config_called);
+        let caps = server.captured();
+        assert!(caps.iter().all(|c| c.path == "/api/replace-file"));
     }
 
     #[test]

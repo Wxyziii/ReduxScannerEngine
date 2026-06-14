@@ -15,6 +15,22 @@ pub const REPLACE_ENDPOINT: &str = "/api/replace-file";
 pub const REPLACE_METHOD: &str = "POST";
 /// The selected future writer route. Locked to CodeWalker.API.
 pub const SELECTED_WRITER_ROUTE: &str = "CodeWalker.API";
+/// Names the CodeWalker.API `/api/replace-file` request contract this plan emits
+/// (`ReplaceFileForm`: required `localFilePath` + `rpfFilePath`). Discovered in
+/// T0.6.15 from the live HTTP 400 "Invalid or missing localFilePath/rpfFilePath".
+pub const REPLACE_API_CONTRACT_NAME: &str = "codewalker_replace_file_v1";
+
+/// Make a path absolute (without the Windows verbatim `\\?\` prefix that
+/// `canonicalize` adds), joining the current working directory when relative.
+fn to_absolute(p: &Path) -> PathBuf {
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|c| c.join(p))
+            .unwrap_or_else(|_| p.to_path_buf())
+    }
+}
 
 // ── Tolerant views over existing JSON reports ───────────────────────────────
 
@@ -319,9 +335,29 @@ pub fn build_codewalker_dry_replace_plan(
         }
 
         let planned_payload = if valid_for_future_replace {
+            // CodeWalker.API contract: localFilePath must be an absolute local
+            // path; rpfFilePath is the resolved in-archive entry path.
+            let local_abs = to_absolute(&bundle_abs);
+            let local_file_path = local_abs.display().to_string();
+            let local_file_path_is_absolute = local_abs.is_absolute();
+            let local_file_path_exists = local_abs.is_file();
+            let codewalker_target_path = resolved_path.clone().unwrap_or_default();
+            let request_schema_validated = local_file_path_is_absolute
+                && local_file_path_exists
+                && !codewalker_target_path.trim().is_empty();
             let payload = CodeWalkerDryReplacePayload {
                 endpoint: REPLACE_ENDPOINT.to_string(),
                 method: REPLACE_METHOD.to_string(),
+                api_contract_name: REPLACE_API_CONTRACT_NAME.to_string(),
+                actual_request_payload: CodeWalkerReplaceActualPayload {
+                    local_file_path: local_file_path.clone(),
+                    rpf_file_path: codewalker_target_path.clone(),
+                },
+                local_file_path,
+                local_file_path_is_absolute,
+                local_file_path_exists,
+                codewalker_target_path,
+                request_schema_validated,
                 rpf_path: resolved_path.clone(),
                 archive_path: resolved_path.clone(),
                 source_file_path: bundle_abs.display().to_string(),

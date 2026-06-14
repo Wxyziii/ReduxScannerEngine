@@ -304,6 +304,47 @@ parameter. Read-only by default; POST stays scoped to the gate-protected replace
 path. No archive mutation, no native RPF parsing.
 See [T0_6_12_CODEWALKER_HTTP_COMPAT.md](docs/T0_6_12_CODEWALKER_HTTP_COMPAT.md) for details.
 
+### Phase T0.6.13 — Archive-Prefix-Aware CodeWalker Target Resolution
+`codewalker-resolve-targets` can now resolve suffix matches that would otherwise be
+ambiguous when the caller supplies an intended archive context. Without a preference
+the conservative behavior is unchanged (multiple suffix matches stay ambiguous). With
+`--preferred-archive <prefix>` (or `--preferred-archive-path <path>`) **and**
+`--allow-archive-prefix-resolution`, the resolver selects the single candidate under
+that archive — e.g. for `common/data/visualsettings.dat` and candidates spanning
+`update.rpf`, `update/update.rpf`, and `update/x64/update.rpf`, passing
+`--preferred-archive "update/update.rpf"` resolves to
+`update/update.rpf/common/data/visualsettings.dat`. It still blocks when no candidate
+matches the preferred archive, when multiple candidates match it equally, and exact
+full-path matches still win over any preference. Paths are normalized (backslashes →
+forward slashes, collapsed slashes, trimmed leading slash) and the preferred-archive
+match is case-insensitive; reports add `preferredArchive`,
+`archivePrefixResolutionEnabled`, per-target `resolutionStrategy`/`ambiguityReason`,
+and per-candidate `candidateOriginalPath`/`candidateNormalizedPath`/
+`matchedPreferredArchive`/`matchedArchivePrefix`. Still **GET-only**: never POST,
+never replace/import/reload-services/set-config or any mutation endpoint, never opens
+or modifies an RPF archive; `canWriteArchive` and `writerAllowed` stay false.
+
+When running real copied-archive tests against `update.rpf`, use
+`--preferred-archive "update/update.rpf"` so CodeWalker's archive-prefixed candidates
+resolve. This is an explicit per-run preference, never a global default.
+See [T0_6_13_CODEWALKER_ARCHIVE_PREFIX_RESOLUTION.md](docs/T0_6_13_CODEWALKER_ARCHIVE_PREFIX_RESOLUTION.md) for details.
+
+### Phase T0.6.15 — CodeWalker Replace Payload Compatibility Fix
+The first real copied-archive execute (T0.6.14) sent `POST /api/replace-file` and got
+`HTTP 400 "Invalid or missing localFilePath."` with the archive byte-identical. The
+CodeWalker.API contract was recovered read-only from the published binary: its
+`ReplaceController` binds a JSON `ReplaceFileForm` requiring **`localFilePath`** (an
+absolute local path to the replacement file) and **`rpfFilePath`** (the full in-archive
+entry path it resolves the owning RPF from). The dry-replace plan now distinguishes
+scanner metadata from the exact `actualRequestPayload`, emits an absolute `localFilePath`
+plus `rpfFilePath`, and records `apiContractName`/`localFilePathIsAbsolute`/
+`requestSchemaValidated`. Replace-apply sends exactly `{ localFilePath, rpfFilePath }`
+(no `sourceFilePath`/`rpfPath`/`archivePath`/`execute`) and a new blocking gate refuses
+to POST unless every planned request has an absolute, existing `localFilePath`. No gate
+was weakened, no original archive touched, no CodeWalker.API file modified, no native RPF
+parsing; `writerAllowed` stays false and the active adapter stays `NullRpfAdapter`.
+See [T0_6_15_CODEWALKER_REPLACE_PAYLOAD_COMPAT.md](docs/T0_6_15_CODEWALKER_REPLACE_PAYLOAD_COMPAT.md) for details.
+
 ## What this project must not do
 
 This scanner should not:

@@ -1,7 +1,12 @@
 #[cfg(test)]
 mod search_tests {
-    use crate::codewalker_api::model::{CodeWalkerSearchConfidence, CodeWalkerSearchResolveStatus};
-    use crate::codewalker_api::search::build_codewalker_search_resolve_report;
+    use crate::codewalker_api::model::{
+        CodeWalkerResolutionStrategy, CodeWalkerSearchConfidence, CodeWalkerSearchResolveStatus,
+    };
+    use crate::codewalker_api::search::{
+        build_codewalker_search_resolve_report,
+        build_codewalker_search_resolve_report_with_preference, ArchivePreference,
+    };
     use serde_json::Value;
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
@@ -485,5 +490,239 @@ mod search_tests {
         // The search used the real `fileName` query parameter.
         let reqs = server.requests();
         assert!(reqs.iter().any(|s| s.contains("fileName=")));
+    }
+
+    // ── T0.6.13 archive-prefix-aware resolution ─────────────────────────────
+
+    /// The real-world `visualsettings.dat` entry and the four archive-prefixed
+    /// candidates CodeWalker returns for it (with backslashes, as seen live).
+    const VS_ARP: &str = "common/data/visualsettings.dat";
+
+    fn answer_vs_multi(path: &str) -> (u16, String) {
+        base(
+            path,
+            r#"["common.rpf\\data\\visualsettings.dat","update.rpf\\common\\data\\visualsettings.dat","update\\update.rpf\\common\\data\\visualsettings.dat","update\\x64\\update.rpf\\common\\data\\visualsettings.dat"]"#,
+        )
+    }
+
+    /// Two candidates that both sit under `update/update.rpf`.
+    fn answer_vs_double_update(path: &str) -> (u16, String) {
+        base(
+            path,
+            r#"["update/update.rpf/common/data/visualsettings.dat","update/update.rpf/x64/common/data/visualsettings.dat"]"#,
+        )
+    }
+
+    fn pref(archive: &str) -> ArchivePreference {
+        ArchivePreference {
+            preferred_archive: Some(archive.to_string()),
+            preferred_archive_path: None,
+            allow_archive_prefix_resolution: true,
+        }
+    }
+
+    fn run_pref(
+        entries: &[&str],
+        body_for: fn(&str) -> (u16, String),
+        preference: &ArchivePreference,
+    ) -> crate::codewalker_api::model::CodeWalkerSearchResolveReport {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manifest = write_manifest(&dir.path(), entries);
+        let (server, ready) = MockServer::start(PROBE_CONNS + entries.len(), body_for);
+        ready.recv().unwrap();
+        build_codewalker_search_resolve_report_with_preference(
+            &manifest,
+            Some(&server.base_url),
+            None,
+            preference,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn resolve_targets_keeps_ambiguous_without_preferred_archive() {
+        // No preference supplied: the three suffix matches stay ambiguous.
+        let r = run_pref(&[VS_ARP], answer_vs_multi, &ArchivePreference::default());
+        assert!(r.resolved_targets.is_empty());
+        assert_eq!(r.ambiguous_targets.len(), 1);
+        assert!(r.targets[0].ambiguous);
+        assert!(!r.archive_prefix_resolution_enabled);
+        assert_eq!(
+            r.targets[0].resolution_strategy,
+            CodeWalkerResolutionStrategy::Ambiguous
+        );
+    }
+
+    #[test]
+    fn resolve_targets_resolves_preferred_update_update_rpf_suffix() {
+        let r = run_pref(&[VS_ARP], answer_vs_multi, &pref("update/update.rpf"));
+        assert_eq!(r.resolved_targets.len(), 1);
+        assert_eq!(
+            r.resolved_targets[0].selected_candidate,
+            "update/update.rpf/common/data/visualsettings.dat"
+        );
+        assert!(r.archive_prefix_resolution_enabled);
+        assert_eq!(
+            r.targets[0].resolution_strategy,
+            CodeWalkerResolutionStrategy::PreferredArchiveSuffix
+        );
+    }
+
+    #[test]
+    fn resolve_targets_resolves_preferred_update_rpf_suffix() {
+        let r = run_pref(&[VS_ARP], answer_vs_multi, &pref("update.rpf"));
+        assert_eq!(r.resolved_targets.len(), 1);
+        assert_eq!(
+            r.resolved_targets[0].selected_candidate,
+            "update.rpf/common/data/visualsettings.dat"
+        );
+    }
+
+    #[test]
+    fn resolve_targets_resolves_preferred_update_x64_update_rpf_suffix() {
+        let r = run_pref(&[VS_ARP], answer_vs_multi, &pref("update/x64/update.rpf"));
+        assert_eq!(r.resolved_targets.len(), 1);
+        assert_eq!(
+            r.resolved_targets[0].selected_candidate,
+            "update/x64/update.rpf/common/data/visualsettings.dat"
+        );
+    }
+
+    #[test]
+    fn resolve_targets_normalizes_backslashes() {
+        // The live candidates use backslashes; resolution still works.
+        let r = run_pref(&[VS_ARP], answer_vs_multi, &pref("update/update.rpf"));
+        let selected = &r.resolved_targets[0].selected_candidate;
+        assert!(
+            !selected.contains('\\'),
+            "selected still has backslash: {selected}"
+        );
+        // The matched candidate records both original and normalized forms.
+        let chosen = r.targets[0].candidates.iter().find(|c| c.selected).unwrap();
+        assert!(chosen.candidate_original_path.contains('\\'));
+        assert!(!chosen.candidate_normalized_path.contains('\\'));
+    }
+
+    #[test]
+    fn resolve_targets_preferred_archive_case_insensitive() {
+        let r = run_pref(&[VS_ARP], answer_vs_multi, &pref("UPDATE/UPDATE.RPF"));
+        assert_eq!(r.resolved_targets.len(), 1);
+        assert_eq!(
+            r.resolved_targets[0].selected_candidate,
+            "update/update.rpf/common/data/visualsettings.dat"
+        );
+    }
+
+    #[test]
+    fn resolve_targets_blocks_when_preferred_archive_has_no_match() {
+        let r = run_pref(&[VS_ARP], answer_vs_multi, &pref("dlcpacks/mymod.rpf"));
+        assert!(r.resolved_targets.is_empty());
+        assert_eq!(r.unresolved_targets.len(), 1);
+        assert!(!r.targets[0].resolved);
+        assert!(r.targets[0].reason.contains("dlcpacks/mymod.rpf"));
+    }
+
+    #[test]
+    fn resolve_targets_blocks_when_multiple_candidates_match_same_preferred_archive() {
+        let r = run_pref(
+            &[VS_ARP],
+            answer_vs_double_update,
+            &pref("update/update.rpf"),
+        );
+        assert!(r.resolved_targets.is_empty());
+        assert_eq!(r.ambiguous_targets.len(), 1);
+        assert!(r.targets[0].ambiguous);
+        assert_eq!(
+            r.targets[0].resolution_strategy,
+            CodeWalkerResolutionStrategy::Ambiguous
+        );
+        assert!(r.targets[0]
+            .ambiguity_reason
+            .as_deref()
+            .unwrap()
+            .contains("update/update.rpf"));
+    }
+
+    fn answer_exact_plus_suffix(path: &str) -> (u16, String) {
+        base(
+            path,
+            r#"["common/data/file.ymt","update/update.rpf/common/data/file.ymt"]"#,
+        )
+    }
+
+    #[test]
+    fn resolve_targets_exact_match_still_wins() {
+        // Even with a preferred archive pointing elsewhere, exact wins.
+        let r = run_pref(&[ARP], answer_exact_plus_suffix, &pref("update/update.rpf"));
+        assert_eq!(r.resolved_targets.len(), 1);
+        assert_eq!(r.resolved_targets[0].selected_candidate, ARP);
+        assert_eq!(
+            r.resolved_targets[0].match_type,
+            CodeWalkerSearchConfidence::Exact
+        );
+        assert_eq!(
+            r.targets[0].resolution_strategy,
+            CodeWalkerResolutionStrategy::Exact
+        );
+    }
+
+    #[test]
+    fn resolve_targets_filename_only_still_weak() {
+        // A filename-only candidate never resolves, even with a preference.
+        let r = run_pref(&[ARP], answer_filename_only, &pref("update/update.rpf"));
+        assert!(r.resolved_targets.is_empty());
+        assert_eq!(r.unresolved_targets.len(), 1);
+        assert!(!r.targets[0].resolved);
+        assert_eq!(
+            r.targets[0].resolution_strategy,
+            CodeWalkerResolutionStrategy::FilenameOnly
+        );
+    }
+
+    #[test]
+    fn resolve_targets_reports_selected_candidate() {
+        let r = run_pref(&[VS_ARP], answer_vs_multi, &pref("update/update.rpf"));
+        assert_eq!(
+            r.targets[0].selected_candidate.as_deref(),
+            Some("update/update.rpf/common/data/visualsettings.dat")
+        );
+        let chosen = r.targets[0].candidates.iter().find(|c| c.selected).unwrap();
+        assert!(chosen.matched_preferred_archive);
+        assert_eq!(
+            chosen.matched_archive_prefix.as_deref(),
+            Some("update/update.rpf")
+        );
+    }
+
+    #[test]
+    fn resolve_targets_reports_resolution_strategy() {
+        let r = run_pref(&[VS_ARP], answer_vs_multi, &pref("update/update.rpf"));
+        assert_eq!(
+            r.targets[0].resolution_strategy,
+            CodeWalkerResolutionStrategy::PreferredArchiveSuffix
+        );
+        assert_eq!(r.preferred_archive.as_deref(), Some("update/update.rpf"));
+    }
+
+    #[test]
+    fn resolve_targets_uses_filename_query_param_still() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manifest = write_manifest(&dir.path(), &[VS_ARP]);
+        let (server, ready) = MockServer::start(PROBE_CONNS + 1, answer_vs_multi);
+        ready.recv().unwrap();
+        let _ = build_codewalker_search_resolve_report_with_preference(
+            &manifest,
+            Some(&server.base_url),
+            None,
+            &pref("update/update.rpf"),
+        )
+        .unwrap();
+        let reqs = server.requests();
+        assert!(
+            reqs.iter()
+                .any(|s| s.contains("fileName=visualsettings.dat")),
+            "fileName query param not seen: {reqs:?}"
+        );
+        assert!(reqs.iter().all(|r| r.starts_with("GET ")));
     }
 }

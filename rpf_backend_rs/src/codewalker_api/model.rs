@@ -271,6 +271,25 @@ pub enum CodeWalkerSearchConfidence {
     None,
 }
 
+/// The deterministic resolution strategy that decided a target's outcome.
+/// Reported per target so callers can audit why a candidate was (not) chosen.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeWalkerResolutionStrategy {
+    /// Exactly one candidate equalled the normalized entry path.
+    Exact,
+    /// Exactly one candidate matched the caller's preferred archive + entry.
+    PreferredArchiveSuffix,
+    /// Exactly one candidate matched by entry-path suffix (no preference).
+    Suffix,
+    /// Only filename-only candidates were present; too weak to resolve.
+    FilenameOnly,
+    /// Multiple candidates tied on the strongest applicable rule.
+    Ambiguous,
+    /// No candidate matched, or the API was offline.
+    Unresolved,
+}
+
 /// A single search result candidate returned by CodeWalker.API.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -282,6 +301,16 @@ pub struct CodeWalkerSearchCandidate {
     pub matches_archive_relative_path_suffix: bool,
     pub confidence: CodeWalkerSearchConfidence,
     pub selected: bool,
+
+    // ── T0.6.13 archive-prefix-aware fields ─────────────────────────────────
+    /// The original candidate string exactly as returned by CodeWalker.
+    pub candidate_original_path: String,
+    /// The fully normalized candidate (slashes, collapsed, leading slash trimmed).
+    pub candidate_normalized_path: String,
+    /// True when this candidate matched the caller's preferred archive context.
+    pub matched_preferred_archive: bool,
+    /// The preferred archive prefix this candidate matched, when any.
+    pub matched_archive_prefix: Option<String>,
 }
 
 /// The actual HTTP GET issued for one target.
@@ -311,6 +340,12 @@ pub struct CodeWalkerSearchTarget {
     pub match_type: CodeWalkerSearchConfidence,
     pub selected_candidate: Option<String>,
     pub reason: String,
+
+    // ── T0.6.13 archive-prefix-aware fields ─────────────────────────────────
+    /// The deterministic strategy that produced this target's outcome.
+    pub resolution_strategy: CodeWalkerResolutionStrategy,
+    /// Present when the target was left ambiguous, explaining why.
+    pub ambiguity_reason: Option<String>,
 }
 
 /// A resolved target (selected candidate present).
@@ -396,6 +431,11 @@ pub struct CodeWalkerSearchResolveReport {
     pub codewalker_api_ready_for_search: bool,
     pub search_endpoint_used: String,
 
+    // ── T0.6.13 archive-prefix-aware resolution inputs ──────────────────────
+    pub preferred_archive: Option<String>,
+    pub preferred_archive_path: Option<String>,
+    pub archive_prefix_resolution_enabled: bool,
+
     pub targets: Vec<CodeWalkerSearchTarget>,
     pub resolved_targets: Vec<CodeWalkerResolvedTarget>,
     pub unresolved_targets: Vec<CodeWalkerUnresolvedTarget>,
@@ -462,15 +502,44 @@ pub struct CodeWalkerDryReplaceResolvedTarget {
     pub ambiguous: bool,
 }
 
-/// A conservative model of the future `/api/replace-file` request body. This is
-/// NEVER sent anywhere in this milestone — it is structured planning only.
+/// The EXACT JSON body sent to CodeWalker.API `POST /api/replace-file`
+/// (its `ReplaceFileForm` `[FromBody]` DTO). Field names match the discovered
+/// CodeWalker.API contract precisely: `localFilePath` is the absolute local path
+/// to the replacement file; `rpfFilePath` is the full in-archive entry path that
+/// CodeWalker resolves the owning RPF from. No extra keys are sent.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeWalkerReplaceActualPayload {
+    pub local_file_path: String,
+    pub rpf_file_path: String,
+}
+
+/// A model of the future `/api/replace-file` request. The `actualRequestPayload`
+/// is exactly what would be sent on the wire; all other fields are scanner-side
+/// metadata for auditing and are NOT part of the CodeWalker.API request body.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeWalkerDryReplacePayload {
     /// Always `/api/replace-file`.
     pub endpoint: String,
-    /// Always `POST` (modelled, never issued).
+    /// Always `POST` (modelled, never issued by this command).
     pub method: String,
+
+    // ── CodeWalker.API contract (T0.6.15) ───────────────────────────────────
+    /// Names the discovered API contract used to shape `actualRequestPayload`.
+    pub api_contract_name: String,
+    /// The exact JSON body a future replace would send.
+    pub actual_request_payload: CodeWalkerReplaceActualPayload,
+    /// Absolute local path to the replacement (bundle) file.
+    pub local_file_path: String,
+    pub local_file_path_is_absolute: bool,
+    pub local_file_path_exists: bool,
+    /// Full in-archive entry path CodeWalker resolves the RPF from (`rpfFilePath`).
+    pub codewalker_target_path: String,
+    /// True when localFilePath is absolute+present and the target path is set.
+    pub request_schema_validated: bool,
+
+    // ── Scanner-side metadata (NOT sent to CodeWalker.API) ──────────────────
     pub rpf_path: Option<String>,
     pub archive_path: Option<String>,
     pub source_file_path: String,

@@ -48,6 +48,52 @@ fn normalize_path(raw: &str) -> String {
     raw.trim().replace('\\', "/")
 }
 
+/// Fully normalize a path for archive-prefix comparison: backslashes to forward
+/// slashes, collapse repeated slashes, trim surrounding whitespace, and trim a
+/// single leading slash. Case is preserved (callers lowercase for matching).
+fn fully_normalize(raw: &str) -> String {
+    let slashed = raw.trim().replace('\\', "/");
+    let mut out = String::with_capacity(slashed.len());
+    let mut prev_slash = false;
+    for ch in slashed.chars() {
+        if ch == '/' {
+            if !prev_slash {
+                out.push(ch);
+            }
+            prev_slash = true;
+        } else {
+            out.push(ch);
+            prev_slash = false;
+        }
+    }
+    out.trim_start_matches('/').to_string()
+}
+
+/// Optional caller preference for archive-prefix-aware target resolution.
+///
+/// When `allow_archive_prefix_resolution` is set and a preferred archive is
+/// given, suffix matches that would otherwise be ambiguous may be resolved to
+/// the candidate matching that archive context. Defaults preserve the
+/// conservative ambiguity behavior.
+#[derive(Debug, Default, Clone)]
+pub struct ArchivePreference {
+    pub preferred_archive: Option<String>,
+    pub preferred_archive_path: Option<String>,
+    pub allow_archive_prefix_resolution: bool,
+}
+
+impl ArchivePreference {
+    /// The effective preferred-archive string: explicit archive prefix wins,
+    /// else the preferred archive path, else none.
+    fn effective(&self) -> Option<&str> {
+        self.preferred_archive
+            .as_deref()
+            .or(self.preferred_archive_path.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+}
+
 /// Final path component (basename) of a normalized path.
 fn basename(normalized: &str) -> String {
     normalized
@@ -148,6 +194,7 @@ fn classify(raw: &str, arp: &str, filename: &str) -> CodeWalkerSearchCandidate {
     } else {
         CodeWalkerSearchConfidence::None
     };
+    let candidate_normalized_path = fully_normalize(raw);
     CodeWalkerSearchCandidate {
         raw_path: raw.to_string(),
         normalized_path: normalized,
@@ -156,7 +203,32 @@ fn classify(raw: &str, arp: &str, filename: &str) -> CodeWalkerSearchCandidate {
         matches_archive_relative_path_suffix: suffix,
         confidence,
         selected: false,
+        candidate_original_path: raw.to_string(),
+        candidate_normalized_path,
+        matched_preferred_archive: false,
+        matched_archive_prefix: None,
     }
+}
+
+/// Decide whether a fully-normalized candidate matches the caller's preferred
+/// archive context for a given entry path. Implements rules B and C: an exact
+/// `preferred/entry` combination, or a candidate that starts with the preferred
+/// archive prefix and ends with the entry path. Case-insensitive on the prefix.
+fn matches_preferred_archive(cand_norm: &str, entry_norm: &str, preferred_norm: &str) -> bool {
+    let cl = cand_norm.to_lowercase();
+    let el = entry_norm.to_lowercase();
+    let pl = preferred_norm.to_lowercase();
+    if pl.is_empty() {
+        return false;
+    }
+    // Rule B: candidate == preferred_archive + "/" + entry_path.
+    if cl == format!("{pl}/{el}") {
+        return true;
+    }
+    // Rule C: candidate begins with preferred prefix AND ends with the entry.
+    let starts = cl.starts_with(&format!("{pl}/"));
+    let ends = cl.ends_with(&format!("/{el}")) || cl == el;
+    starts && ends
 }
 
 /// Read-only CodeWalker search + target-resolution planner.
@@ -172,6 +244,32 @@ pub fn build_codewalker_search_resolve_report(
     base_url: Option<&str>,
     readiness_report_path: Option<&Path>,
 ) -> Result<CodeWalkerSearchResolveReport, String> {
+    build_codewalker_search_resolve_report_with_preference(
+        entry_manifest_report_path,
+        base_url,
+        readiness_report_path,
+        &ArchivePreference::default(),
+    )
+}
+
+/// Archive-prefix-aware variant of [`build_codewalker_search_resolve_report`].
+///
+/// Behaves identically to the conservative resolver when `preference` carries no
+/// effective preferred archive or prefix resolution is not enabled. When a
+/// preferred archive is supplied and `allow_archive_prefix_resolution` is set,
+/// otherwise-ambiguous suffix matches may be resolved to the candidate matching
+/// that archive context. Still read-only and planning-only: GET search calls
+/// only, never a POST/mutation, never opens or modifies an RPF archive.
+pub fn build_codewalker_search_resolve_report_with_preference(
+    entry_manifest_report_path: &Path,
+    base_url: Option<&str>,
+    readiness_report_path: Option<&Path>,
+    preference: &ArchivePreference,
+) -> Result<CodeWalkerSearchResolveReport, String> {
+    let effective_preferred = preference.effective().map(|s| s.to_string());
+    let preferred_norm = effective_preferred.as_deref().map(fully_normalize);
+    let archive_prefix_resolution_enabled =
+        preference.allow_archive_prefix_resolution && preferred_norm.is_some();
     // Active adapter facts come from the real, safe adapter — never CodeWalker.
     let adapter = NullRpfAdapter::new();
     let active_adapter_name = adapter.name().to_string();
@@ -319,6 +417,19 @@ pub fn build_codewalker_search_resolve_report(
             }
         }
 
+        // ── Mark preferred-archive matches on candidates (when enabled) ─────
+        let entry_norm = fully_normalize(&arp);
+        if archive_prefix_resolution_enabled {
+            if let Some(pref) = preferred_norm.as_deref() {
+                for c in candidates.iter_mut() {
+                    if matches_preferred_archive(&c.candidate_normalized_path, &entry_norm, pref) {
+                        c.matched_preferred_archive = true;
+                        c.matched_archive_prefix = effective_preferred.clone();
+                    }
+                }
+            }
+        }
+
         // Resolution rules.
         let exact_idx: Vec<usize> = candidates
             .iter()
@@ -332,6 +443,12 @@ pub fn build_codewalker_search_resolve_report(
             .filter(|(_, c)| c.confidence == CodeWalkerSearchConfidence::Suffix)
             .map(|(i, _)| i)
             .collect();
+        let preferred_idx: Vec<usize> = candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.matched_preferred_archive)
+            .map(|(i, _)| i)
+            .collect();
         let filename_only = candidates
             .iter()
             .any(|c| c.confidence == CodeWalkerSearchConfidence::FilenameOnly);
@@ -343,28 +460,69 @@ pub fn build_codewalker_search_resolve_report(
         let mut ambiguous = false;
         let mut match_type = CodeWalkerSearchConfidence::None;
         let mut selected_candidate: Option<String> = None;
+        let mut strategy = CodeWalkerResolutionStrategy::Unresolved;
+        let mut ambiguity_reason: Option<String> = None;
+        let preferred_label = effective_preferred.clone().unwrap_or_default();
         let reason: String;
 
         if !reachable {
             reason = "CodeWalker.API offline; target unresolved.".to_string();
         } else if exact_idx.len() == 1 {
+            // Rule A: an exact normalized full-path match always wins.
             let i = exact_idx[0];
             candidates[i].selected = true;
             selected_candidate = Some(candidates[i].normalized_path.clone());
             match_type = CodeWalkerSearchConfidence::Exact;
+            strategy = CodeWalkerResolutionStrategy::Exact;
             resolved = true;
             reason = "Exactly one exact match.".to_string();
-        } else if exact_idx.is_empty() && suffix_idx.len() == 1 {
+        } else if exact_idx.len() > 1 {
+            ambiguous = true;
+            strategy = CodeWalkerResolutionStrategy::Ambiguous;
+            ambiguity_reason = Some("Multiple exact matches.".to_string());
+            reason = "Multiple exact matches; ambiguous.".to_string();
+        } else if archive_prefix_resolution_enabled {
+            // Rules B/C: resolve via the caller's preferred archive context.
+            if preferred_idx.len() == 1 {
+                let i = preferred_idx[0];
+                candidates[i].selected = true;
+                selected_candidate = Some(candidates[i].normalized_path.clone());
+                match_type = CodeWalkerSearchConfidence::Suffix;
+                strategy = CodeWalkerResolutionStrategy::PreferredArchiveSuffix;
+                resolved = true;
+                reason = format!("Resolved via preferred archive '{preferred_label}'.");
+            } else if preferred_idx.len() > 1 {
+                ambiguous = true;
+                strategy = CodeWalkerResolutionStrategy::Ambiguous;
+                ambiguity_reason = Some(format!(
+                    "Multiple candidates match preferred archive '{preferred_label}'."
+                ));
+                reason = "Multiple candidates match the preferred archive; ambiguous.".to_string();
+            } else {
+                // Rule F: no candidate matches the preferred archive -> blocked.
+                strategy = if filename_only {
+                    CodeWalkerResolutionStrategy::FilenameOnly
+                } else {
+                    CodeWalkerResolutionStrategy::Unresolved
+                };
+                reason = format!("No candidate matched preferred archive '{preferred_label}'.");
+            }
+        } else if suffix_idx.len() == 1 {
             let i = suffix_idx[0];
             candidates[i].selected = true;
             selected_candidate = Some(candidates[i].normalized_path.clone());
             match_type = CodeWalkerSearchConfidence::Suffix;
+            strategy = CodeWalkerResolutionStrategy::Suffix;
             resolved = true;
             reason = "Exactly one suffix match.".to_string();
-        } else if exact_idx.len() + suffix_idx.len() > 1 {
+        } else if suffix_idx.len() > 1 {
             ambiguous = true;
+            strategy = CodeWalkerResolutionStrategy::Ambiguous;
+            ambiguity_reason = Some("Multiple suffix matches.".to_string());
             reason = "Multiple matching candidates; ambiguous.".to_string();
         } else if filename_only {
+            // Rule D: filename-only is weak and never resolves on its own.
+            strategy = CodeWalkerResolutionStrategy::FilenameOnly;
             reason = "Only filename-only candidates; not enough to resolve.".to_string();
         } else {
             reason = "No matching candidate found.".to_string();
@@ -401,6 +559,8 @@ pub fn build_codewalker_search_resolve_report(
             match_type,
             selected_candidate,
             reason,
+            resolution_strategy: strategy,
+            ambiguity_reason,
         });
     }
 
@@ -577,6 +737,9 @@ pub fn build_codewalker_search_resolve_report(
         codewalker_api_reachable: reachable,
         codewalker_api_ready_for_search: ready_for_search,
         search_endpoint_used: SEARCH_ENDPOINT.to_string(),
+        preferred_archive: preference.preferred_archive.clone(),
+        preferred_archive_path: preference.preferred_archive_path.clone(),
+        archive_prefix_resolution_enabled,
         targets,
         resolved_targets,
         unresolved_targets,

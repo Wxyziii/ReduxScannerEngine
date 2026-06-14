@@ -364,6 +364,9 @@ struct Args {
     check_replace_options: bool,
     changed_files: Vec<String>,
     operation_id: Option<String>,
+    preferred_archive: Option<String>,
+    preferred_archive_path: Option<String>,
+    allow_archive_prefix_resolution: bool,
 }
 
 fn usage() {
@@ -492,15 +495,22 @@ Commands:
                 error). codewalkerApiReadyForReplace, canWriteArchive, and
                 writerAllowed are always false. Exits 0.
   codewalker-resolve-targets --entry-manifest-report <path> [--base-url <url>]
-                [--readiness-report <path>] [--out <out.json>]
+                [--readiness-report <path>] [--preferred-archive <prefix>]
+                [--preferred-archive-path <path>] [--allow-archive-prefix-resolution]
+                [--out <out.json>]
                 Map RPF entry manifest entries to CodeWalker search results using
                 read-only GET /api/search-file?filename=<name>. Resolves a target
                 only on a unique exact or unique suffix match; filename-only and
-                ambiguous matches stay unresolved. GET-only — never POST, never
-                replace/import/reload-services/set-config or any mutation endpoint,
-                never executes CodeWalker, never opens or modifies an RPF archive.
-                Offline yields all targets unresolved (not an error).
-                canWriteArchive and writerAllowed are always false. Exits 0.
+                ambiguous matches stay unresolved. With --preferred-archive and
+                --allow-archive-prefix-resolution, an otherwise-ambiguous suffix
+                match may resolve to the candidate under that archive context
+                (e.g. --preferred-archive "update/update.rpf"); it still blocks
+                when no/multiple candidates match the preferred archive. GET-only —
+                never POST, never replace/import/reload-services/set-config or any
+                mutation endpoint, never executes CodeWalker, never opens or
+                modifies an RPF archive. Offline yields all targets unresolved
+                (not an error). canWriteArchive and writerAllowed are always
+                false. Exits 0.
   codewalker-dry-replace-plan --bundle-dir <path> --entry-manifest-report <path>
                 --resolve-report <path> [--permission-report <path>] [--out <out.json>]
                 Combine the entry manifest, the CodeWalker resolve report, and the
@@ -737,6 +747,9 @@ fn parse_args() -> Result<Args> {
         check_replace_options: false,
         changed_files: Vec::new(),
         operation_id: None,
+        preferred_archive: None,
+        preferred_archive_path: None,
+        allow_archive_prefix_resolution: false,
     };
 
     let mut explicit_mode: Option<ScanMode> = None;
@@ -940,6 +953,17 @@ fn parse_args() -> Result<Args> {
                 args.search_filename =
                     Some(it.next().context("missing value for --search-filename")?)
             }
+            "--preferred-archive" => {
+                args.preferred_archive =
+                    Some(it.next().context("missing value for --preferred-archive")?)
+            }
+            "--preferred-archive-path" => {
+                args.preferred_archive_path = Some(
+                    it.next()
+                        .context("missing value for --preferred-archive-path")?,
+                )
+            }
+            "--allow-archive-prefix-resolution" => args.allow_archive_prefix_resolution = true,
             "--check-replace-options" => args.check_replace_options = true,
             "--execute" => args.execute = true,
             "--execute-rollback" => args.execute_rollback = true,
@@ -11319,12 +11343,19 @@ fn main() -> Result<()> {
             // replace/import/reload-services/set-config, never issues a POST or any
             // mutation, never executes CodeWalker, never opens or modifies an RPF
             // archive. canWriteArchive/writerAllowed stay false. Exits 0.
-            let report = codewalker_api::search::build_codewalker_search_resolve_report(
-                &entry_manifest_report,
-                args.base_url.as_deref(),
-                args.readiness_report.as_deref(),
-            )
-            .map_err(anyhow::Error::msg)?;
+            let preference = codewalker_api::search::ArchivePreference {
+                preferred_archive: args.preferred_archive.clone(),
+                preferred_archive_path: args.preferred_archive_path.clone(),
+                allow_archive_prefix_resolution: args.allow_archive_prefix_resolution,
+            };
+            let report =
+                codewalker_api::search::build_codewalker_search_resolve_report_with_preference(
+                    &entry_manifest_report,
+                    args.base_url.as_deref(),
+                    args.readiness_report.as_deref(),
+                    &preference,
+                )
+                .map_err(anyhow::Error::msg)?;
             write_validation_result(args.out.as_ref(), &report)?;
         }
         "codewalker-dry-replace-plan" => {
